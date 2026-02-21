@@ -1,41 +1,77 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-
-// Define which roles can access which paths
-const ROLE_ROUTES = {
-  STUDENT: '/dashboard/student',
-  FACULTY: '/dashboard/faculty',
-  HOD: '/dashboard/hod',
-  ACCOUNTS_OFFICER: '/dashboard/accounts',
-  // Add other roles as needed...
-};
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { getSessionFromRequest } from "@/lib/session";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 1. Skip middleware for API routes and static files
-  if (pathname.startsWith('/api') || pathname.startsWith('/_next')) {
+  if (pathname.startsWith("/api") || pathname.startsWith("/_next")) {
     return NextResponse.next();
   }
 
-  // 2. Mock Session Check (Replace with your Auth session logic later)
-  // In a real app, you'd get the user's email/role from a cookie or JWT
-  const userRole = "STUDENT"; // This will be dynamic after Auth setup
+  // 2. Read session from httpOnly JWT cookie
+  const session = await getSessionFromRequest(request);
 
-  // 3. Prevent Students from accessing Staff areas (Section 5.1)
-  if (pathname.startsWith('/dashboard/staff') && userRole === 'STUDENT') {
-    return NextResponse.redirect(new URL('/dashboard/student', request.url));
+  // 3. If not logged in, redirect to login (except if already on /login)
+  if (!session) {
+    if (pathname === "/login") return NextResponse.next();
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // 4. Prevent Staff from accessing Student forms
-  if (pathname.startsWith('/apply') && userRole !== 'STUDENT') {
-    return NextResponse.redirect(new URL('/dashboard/faculty', request.url));
+  // 4. If logged in and on /login, redirect to their dashboard
+  if (pathname === "/login") {
+    if (session.role === "STUDENT") {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    return NextResponse.redirect(
+      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
+    );
+  }
+
+  // 5. Prevent Students from accessing Staff dashboards
+  if (pathname.startsWith("/dashboard/staff") && session.role === "STUDENT") {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
+  // 6. Prevent Staff from accessing Student-only pages (apply, track, certificate)
+  const studentOnlyPaths = ["/apply", "/track", "/certificate"];
+  if (
+    studentOnlyPaths.some((p) => pathname.startsWith(p)) &&
+    session.role !== "STUDENT"
+  ) {
+    return NextResponse.redirect(
+      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
+    );
+  }
+
+  // 7. Prevent Students from accessing /dashboard/staff
+  if (
+    pathname.startsWith("/dashboard/staff") &&
+    session.role === "STUDENT"
+  ) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
+  // 8. Prevent Staff from accessing Student dashboard (/dashboard exactly)
+  if (
+    pathname === "/dashboard" &&
+    session.role !== "STUDENT"
+  ) {
+    return NextResponse.redirect(
+      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
+    );
   }
 
   return NextResponse.next();
 }
 
-// Only run middleware on dashboard and application routes
 export const config = {
-  matcher: ['/dashboard/:path*', '/apply/:path*'],
+  matcher: [
+    "/dashboard/:path*",
+    "/apply/:path*",
+    "/track/:path*",
+    "/certificate/:path*",
+    "/login",
+  ],
 };

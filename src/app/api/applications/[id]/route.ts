@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getServerSession } from "@/lib/session";
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    // --- Auth check ---
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json(
+        { success: false, error: "Not authenticated" },
+        { status: 401 }
+      );
+    }
+
+    const { id } = await params;
 
     const application = await prisma.application.findUnique({
       where: { id },
       include: {
         approvals: {
-          orderBy: {
-            stage: 'asc', // Ensures Faculty (1) comes before Accounts (9)
-          },
+          orderBy: { stage: "asc" },
         },
       },
     });
@@ -26,24 +34,32 @@ export async function GET(
       );
     }
 
-    // Calculate completion percentage for the Dashboard (Section 2.4)
+    // --- Authorization: students can only see their own ---
+    if (
+      session.role === "STUDENT" &&
+      application.studentId !== session.userId
+    ) {
+      return NextResponse.json(
+        { success: false, error: "Access denied" },
+        { status: 403 }
+      );
+    }
+
+    // Calculate completion percentage
     const totalStages = application.approvals.length;
     const approvedStages = application.approvals.filter(
       (a) => a.status === "APPROVED"
     ).length;
-    
-    const completionPercentage = totalStages > 0 
-      ? Math.round((approvedStages / totalStages) * 100) 
-      : 0;
+
+    const completionPercentage =
+      totalStages > 0
+        ? Math.round((approvedStages / totalStages) * 100)
+        : 0;
 
     return NextResponse.json({
       success: true,
-      data: {
-        ...application,
-        completionPercentage,
-      },
+      data: { ...application, completionPercentage },
     });
-
   } catch (error) {
     console.error("Fetch Application Error:", error);
     return NextResponse.json(
