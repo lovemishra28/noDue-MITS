@@ -1,0 +1,96 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+// 11 Roles defined in Section 2.2 of your design
+enum UserRole {
+  STUDENT
+  FACULTY
+  CLASS_COORDINATOR
+  HOD
+  HOSTEL_WARDEN
+  LIBRARY_ADMIN
+  WORKSHOP_ADMIN
+  TP_OFFICER
+  GENERAL_OFFICE
+  ACCOUNTS_OFFICER
+  SUPER_ADMIN
+}
+
+enum ApplicationStatus {
+  IN_PROGRESS
+  SUBMITTED
+  FULLY_APPROVED
+  REJECTED
+}
+
+enum ApprovalStatus {
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique // Auto-detection source [cite: 263]
+  enrollmentNo  String?  @unique 
+  name          String
+  role          UserRole @default(STUDENT)
+  department    String?  
+  createdAt     DateTime @default(now())
+}
+
+model Application {
+  id                String            @id @default(cuid())
+  applicationNo     String            @unique // e.g. #A82B9C1F [cite: 144]
+  studentId         String
+  status            ApplicationStatus @default(IN_PROGRESS)
+  
+  // Section 3: Application Process Details [cite: 99]
+  fullName          String
+  fatherName        String
+  phoneNumber       String
+  address           String
+  passOutYear       Int
+  course            String
+  cgpa              Float
+  
+  // Hostel & Caution Money Logic [cite: 112]
+  isHostelResident  Boolean           @default(false)
+  hostelName        String?
+  roomNumber        String?
+  cautionMoneyRefund Boolean          @default(false)
+  receiptNumber     String?
+  
+  // Document Uploads [cite: 123]
+  feeReceipts       String[] // Array of URLs
+  marksheet         String?
+  bankDetails       String?
+  collegeId         String?
+
+  // Workflow tracking
+  currentStage      Int               @default(1) 
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  approvals         Approval[]
+}
+
+model Approval {
+  id            String         @id @default(cuid())
+  applicationId String
+  stage         Int            // 1 to 9 [cite: 309]
+  department    String         // e.g. "Library"
+  status        ApprovalStatus @default(UNDER_REVIEW)
+  remarks       String?        
+  actionDate    DateTime?      
+  
+  application   Application    @relation(fields: [applicationId], references: [id])
+}
