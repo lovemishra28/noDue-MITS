@@ -197,6 +197,8 @@ async function signInAndRespond(user: {
       name: user.name,
       email: user.email,
       role: user.role,
+      enrollmentNo: user.enrollmentNo,
+      department: user.department,
     },
     redirectPath,
   });
