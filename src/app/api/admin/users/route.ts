@@ -16,6 +16,27 @@ const ASSIGNABLE_ROLES = [
   "ACCOUNTS_OFFICER",
 ] as const;
 
+// Roles that require a department to be assigned
+const DEPT_SPECIFIC_ROLES = ["FACULTY", "CLASS_COORDINATOR", "HOD"];
+
+const VALID_DEPARTMENTS = [
+  "Civil Engineering",
+  "Mechanical Engineering",
+  "Electrical Engineering",
+  "Electronics Engineering",
+  "Computer Science & Engineering",
+  "Information Technology",
+  "Centre for Artificial Intelligence",
+  "Centre for Internet of Things",
+  "Engineering Mathematics & Computing",
+  "Centre for Computer Science and Technology",
+  "Chemical Engineering",
+  "Architecture & Planning",
+  "Applied Science",
+  "Humanities and Management",
+  "Electronics and Telecommunications Engineering",
+];
+
 /**
  * GET /api/admin/users?search=email@example.com
  * Search users by email (Super Admin only)
@@ -102,6 +123,16 @@ export async function PATCH(request: Request) {
         { success: false, error: `Invalid role. Allowed: ${ASSIGNABLE_ROLES.join(", ")}` },
         { status: 400 }
       );
+    }
+
+    // Department is required for Faculty, Class Coordinator, and HOD
+    if (DEPT_SPECIFIC_ROLES.includes(role)) {
+      if (!department || typeof department !== "string" || !VALID_DEPARTMENTS.includes(department)) {
+        return NextResponse.json(
+          { success: false, error: `Department is required for ${role}. Choose from: ${VALID_DEPARTMENTS.join(", ")}` },
+          { status: 400 }
+        );
+      }
     }
 
     // Make sure the target user exists and is not a Super Admin

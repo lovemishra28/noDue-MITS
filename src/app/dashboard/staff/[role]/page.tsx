@@ -18,6 +18,28 @@ const ROLE_TO_DEPT: Record<string, { department: string; stage: number }> = {
   accounts_officer: { department: "Accounts Office", stage: 9 },
 };
 
+// Institute departments
+const DEPARTMENTS = [
+  "Civil Engineering",
+  "Mechanical Engineering",
+  "Electrical Engineering",
+  "Electronics Engineering",
+  "Computer Science & Engineering",
+  "Information Technology",
+  "Centre for Artificial Intelligence",
+  "Centre for Internet of Things",
+  "Engineering Mathematics & Computing",
+  "Centre for Computer Science and Technology",
+  "Chemical Engineering",
+  "Architecture & Planning",
+  "Applied Science",
+  "Humanities and Management",
+  "Electronics and Telecommunications Engineering",
+];
+
+// Roles that require a department to be selected
+const DEPT_SPECIFIC_ROLES = ["FACULTY", "CLASS_COORDINATOR", "HOD"];
+
 // All roles that can be assigned by Super Admin
 const ASSIGNABLE_ROLES = [
   { value: "STUDENT", label: "Student" },
@@ -76,7 +98,24 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
   const [newRole, setNewRole] = useState("");
   const [newDepartment, setNewDepartment] = useState("");
   const [assigning, setAssigning] = useState(false);
+  // Quick role assignment via clickable blocks
+  const [quickAssignRole, setQuickAssignRole] = useState<string | null>(null);
+  const [quickAssignEmail, setQuickAssignEmail] = useState("");
+  const [quickAssigning, setQuickAssigning] = useState(false);
+  const [selectedDeptForRoles, setSelectedDeptForRoles] = useState("");
   const [adminMessage, setAdminMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [adminStats, setAdminStats] = useState<{
+    totalUsers: number;
+    totalStudents: number;
+    totalFaculty: number;
+    totalApplications: number;
+    pendingApplications: number;
+    approvedApplications: number;
+    rejectedApplications: number;
+    roleDistribution: { role: string; count: number }[];
+    recentUsers: SearchedUser[];
+  } | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const deptInfo = ROLE_TO_DEPT[role];
   const roleName = getRoleName(role.toUpperCase());
@@ -92,8 +131,29 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
     }
     if (deptInfo) {
       fetchPendingApprovals();
+    } else {
+      // Super Admin or unknown role — no approvals to fetch
+      setFetching(false);
+      if (role === "super_admin") {
+        fetchAdminStats();
+      }
     }
   }, [user, loading, role]);
+
+  const fetchAdminStats = async () => {
+    setStatsLoading(true);
+    try {
+      const res = await fetch("/api/admin/stats");
+      const data = await res.json();
+      if (data.success) {
+        setAdminStats(data.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch admin stats:", err);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
 
   const fetchPendingApprovals = async () => {
     try {
@@ -137,7 +197,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
     }
   };
 
-  if (loading || fetching) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
@@ -189,7 +249,6 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
         const data = await res.json();
         if (data.success) {
           setAdminMessage({ type: "success", text: data.message });
-          // Update the search results inline
           setSearchResults((prev) =>
             prev.map((u) =>
               u.id === selectedUser.id
@@ -200,6 +259,8 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
           setSelectedUser(null);
           setNewRole("");
           setNewDepartment("");
+          // Refresh stats after role change
+          fetchAdminStats();
         } else {
           setAdminMessage({ type: "error", text: data.error || "Failed to assign role" });
         }
@@ -210,6 +271,52 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
       }
     };
 
+    const handleQuickAssign = async (targetRole: string, department?: string) => {
+      if (!quickAssignEmail.trim()) return;
+      setQuickAssigning(true);
+      setAdminMessage(null);
+      try {
+        const searchRes = await fetch(`/api/admin/users?search=${encodeURIComponent(quickAssignEmail.trim())}`);
+        const searchData = await searchRes.json();
+        if (!searchData.success || searchData.data.length === 0) {
+          setAdminMessage({ type: "error", text: "No user found with that email." });
+          return;
+        }
+        const targetUser = searchData.data.find(
+          (u: SearchedUser) => u.email.toLowerCase() === quickAssignEmail.trim().toLowerCase()
+        );
+        if (!targetUser) {
+          setAdminMessage({ type: "error", text: "No exact email match found. Enter the full email address." });
+          return;
+        }
+        const res = await fetch("/api/admin/users", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: targetUser.id,
+            role: targetRole,
+            department: department || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAdminMessage({
+            type: "success",
+            text: `${targetUser.name} (${targetUser.email}) assigned as ${getRoleName(targetRole)}${department ? ` — ${department}` : ""}.`,
+          });
+          setQuickAssignEmail("");
+          setQuickAssignRole(null);
+          fetchAdminStats();
+        } else {
+          setAdminMessage({ type: "error", text: data.error || "Failed to assign role" });
+        }
+      } catch {
+        setAdminMessage({ type: "error", text: "Something went wrong" });
+      } finally {
+        setQuickAssigning(false);
+      }
+    };
+
     return (
       <div className="min-h-screen">
         <PageHeader title="Super Admin Panel" subtitle="Manage user roles and system administration" />
@@ -217,16 +324,236 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
 
           {/* Status Message */}
           {adminMessage && (
-            <div className={`p-4 rounded-xl text-sm font-medium border ${
+            <div className={`p-4 rounded-xl text-sm font-medium border flex items-center space-x-2 ${
               adminMessage.type === "success"
                 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                 : "bg-red-50 text-red-700 border-red-200"
             }`}>
-              {adminMessage.text}
+              {adminMessage.type === "success" ? (
+                <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+              ) : (
+                <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              )}
+              <span>{adminMessage.text}</span>
             </div>
           )}
 
-          {/* Search Section */}
+          {/* ─── Overview Stats ─── */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/60 shadow-sm">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                  <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">{statsLoading ? "..." : adminStats?.totalUsers ?? 0}</p>
+                  <p className="text-xs text-gray-400 font-medium">Total Users</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/60 shadow-sm">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 bg-indigo-50 rounded-xl flex items-center justify-center">
+                  <svg className="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">{statsLoading ? "..." : adminStats?.totalStudents ?? 0}</p>
+                  <p className="text-xs text-gray-400 font-medium">Students</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/60 shadow-sm">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 bg-amber-50 rounded-xl flex items-center justify-center">
+                  <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">{statsLoading ? "..." : adminStats?.totalApplications ?? 0}</p>
+                  <p className="text-xs text-gray-400 font-medium">Applications</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/60 shadow-sm">
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                  <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">{statsLoading ? "..." : adminStats?.approvedApplications ?? 0}</p>
+                  <p className="text-xs text-gray-400 font-medium">Approved</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── Application Status Breakdown ─── */}
+          {adminStats && (adminStats.pendingApplications > 0 || adminStats.rejectedApplications > 0) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-gray-200/60 shadow-sm">
+                <div className="flex items-center space-x-3">
+                  <div className="h-10 w-10 bg-yellow-50 rounded-xl flex items-center justify-center">
+                    <svg className="h-5 w-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{adminStats.pendingApplications}</p>
+                    <p className="text-xs text-gray-400 font-medium">In Progress</p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white p-5 rounded-2xl border border-gray-200/60 shadow-sm">
+                <div className="flex items-center space-x-3">
+                  <div className="h-10 w-10 bg-red-50 rounded-xl flex items-center justify-center">
+                    <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{adminStats.rejectedApplications}</p>
+                    <p className="text-xs text-gray-400 font-medium">Rejected</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Universal Roles ─── */}
+          <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm p-6">
+            <h3 className="text-base font-bold text-gray-900 mb-1">Universal Roles</h3>
+            <p className="text-sm text-gray-400 mb-4">Click a role to assign it to a user by email.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {[
+                { value: "HOSTEL_WARDEN", label: "Hostel Warden" },
+                { value: "LIBRARY_ADMIN", label: "Library Admin" },
+                { value: "WORKSHOP_ADMIN", label: "Workshop Admin" },
+                { value: "TP_OFFICER", label: "T&P Officer" },
+                { value: "GENERAL_OFFICE", label: "General Office" },
+                { value: "ACCOUNTS_OFFICER", label: "Accounts Officer" },
+              ].map((r) => {
+                const count = adminStats?.roleDistribution.find((rd) => rd.role === r.value)?.count ?? 0;
+                const isActive = quickAssignRole === r.value;
+                return (
+                  <div key={r.value} className="space-y-2">
+                    <button
+                      onClick={() => {
+                        setQuickAssignRole(isActive ? null : r.value);
+                        setQuickAssignEmail("");
+                      }}
+                      className={`w-full rounded-xl p-4 text-center border-2 transition-all cursor-pointer ${
+                        isActive
+                          ? "bg-blue-50 border-blue-400 ring-2 ring-blue-200 shadow-md"
+                          : "bg-gray-50 border-transparent hover:border-gray-300 hover:shadow-sm"
+                      }`}
+                    >
+                      <p className="text-lg font-bold text-gray-900">{count}</p>
+                      <p className="text-xs text-gray-600 font-semibold mt-0.5">{r.label}</p>
+                    </button>
+                    {isActive && (
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          placeholder="user@mitsgwl.ac.in"
+                          className="flex-1 px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900"
+                          value={quickAssignEmail}
+                          onChange={(e) => setQuickAssignEmail(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleQuickAssign(r.value)}
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleQuickAssign(r.value)}
+                          disabled={quickAssigning || !quickAssignEmail.trim()}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm shrink-0"
+                        >
+                          {quickAssigning ? "..." : "Assign"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ─── Department-Based Role Distribution ─── */}
+          <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm p-6">
+            <h3 className="text-base font-bold text-gray-900 mb-1">Department-Based Roles</h3>
+            <p className="text-sm text-gray-400 mb-4">Select a department, then assign HOD, Faculty, or Class Coordinator.</p>
+            <select
+              value={selectedDeptForRoles}
+              onChange={(e) => {
+                setSelectedDeptForRoles(e.target.value);
+                setQuickAssignRole(null);
+                setQuickAssignEmail("");
+              }}
+              className="block w-full sm:w-80 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm mb-4"
+            >
+              <option value="">Select a department...</option>
+              {DEPARTMENTS.map((dept) => (
+                <option key={dept} value={dept}>{dept}</option>
+              ))}
+            </select>
+
+            {selectedDeptForRoles && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  { value: "HOD", label: "Head of Department" },
+                  { value: "FACULTY", label: "Faculty" },
+                  { value: "CLASS_COORDINATOR", label: "Class Coordinator" },
+                ].map((r) => {
+                  const isActive = quickAssignRole === `${r.value}_DEPT`;
+                  return (
+                    <div key={r.value} className="space-y-2">
+                      <button
+                        onClick={() => {
+                          setQuickAssignRole(isActive ? null : `${r.value}_DEPT`);
+                          setQuickAssignEmail("");
+                        }}
+                        className={`w-full rounded-xl p-4 text-center border-2 transition-all cursor-pointer ${
+                          isActive
+                            ? "bg-indigo-50 border-indigo-400 ring-2 ring-indigo-200 shadow-md"
+                            : "bg-gray-50 border-transparent hover:border-gray-300 hover:shadow-sm"
+                        }`}
+                      >
+                        <p className="text-sm font-bold text-gray-900">{r.label}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{selectedDeptForRoles}</p>
+                      </button>
+                      {isActive && (
+                        <div className="flex gap-2">
+                          <input
+                            type="email"
+                            placeholder="faculty@mitsgwl.ac.in"
+                            className="flex-1 px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900"
+                            value={quickAssignEmail}
+                            onChange={(e) => setQuickAssignEmail(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleQuickAssign(r.value, selectedDeptForRoles)}
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleQuickAssign(r.value, selectedDeptForRoles)}
+                            disabled={quickAssigning || !quickAssignEmail.trim()}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm shrink-0"
+                          >
+                            {quickAssigning ? "..." : "Assign"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ─── Search & Assign Roles ─── */}
           <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-1">Search & Assign Roles</h3>
             <p className="text-sm text-gray-400 mb-5">
@@ -258,7 +585,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
             </div>
           </div>
 
-          {/* Search Results */}
+          {/* ─── Search Results ─── */}
           {searchResults.length > 0 && (
             <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100">
@@ -298,7 +625,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                             {getRoleName(u.role)}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">{u.department || "—"}</td>
+                        <td className="px-6 py-4 text-sm text-gray-500">{u.department || "\u2014"}</td>
                         <td className="px-6 py-4">
                           <button
                             onClick={() => {
@@ -320,7 +647,65 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
             </div>
           )}
 
-          {/* Role Assignment Modal */}
+          {/* ─── Recent Users ─── */}
+          {adminStats && adminStats.recentUsers.length > 0 && searchResults.length === 0 && (
+            <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="text-base font-bold text-gray-900">Recent Users</h3>
+                <span className="text-xs text-gray-400">Last {adminStats.recentUsers.length} registered</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50/80 border-b border-gray-100">
+                    <tr>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100/80">
+                    {adminStats.recentUsers.map((u) => (
+                      <tr key={u.id} className="hover:bg-gray-50/60 transition-colors">
+                        <td className="px-6 py-4">
+                          <p className="font-medium text-sm text-gray-900">{u.name}</p>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">{u.email}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            u.role === "STUDENT"
+                              ? "bg-blue-50 text-blue-700"
+                              : u.role === "FACULTY"
+                              ? "bg-indigo-50 text-indigo-700"
+                              : "bg-amber-50 text-amber-700"
+                          }`}>
+                            {getRoleName(u.role)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">{u.department || "\u2014"}</td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => {
+                              setSelectedUser(u);
+                              setNewRole(u.role);
+                              setNewDepartment(u.department || "");
+                              setAdminMessage(null);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 text-sm font-semibold transition-colors"
+                          >
+                            Change Role
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Role Assignment Modal ─── */}
           {selectedUser && (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-5">
@@ -347,7 +732,13 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                     </label>
                     <select
                       value={newRole}
-                      onChange={(e) => setNewRole(e.target.value)}
+                      onChange={(e) => {
+                        setNewRole(e.target.value);
+                        // Clear department when switching to a non-dept-specific role
+                        if (!DEPT_SPECIFIC_ROLES.includes(e.target.value)) {
+                          setNewDepartment("");
+                        }
+                      }}
                       className="block w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm"
                     >
                       {ASSIGNABLE_ROLES.map((r) => (
@@ -358,18 +749,40 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
-                      Department (optional)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. CSE, ECE, ME..."
-                      className="block w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm"
-                      value={newDepartment}
-                      onChange={(e) => setNewDepartment(e.target.value)}
-                    />
-                  </div>
+                  {/* Department — required for Faculty / Class Coordinator / HOD */}
+                  {DEPT_SPECIFIC_ROLES.includes(newRole) ? (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                        Department <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={newDepartment}
+                        onChange={(e) => setNewDepartment(e.target.value)}
+                        className="block w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm"
+                      >
+                        <option value="">Select a department...</option>
+                        {DEPARTMENTS.map((dept) => (
+                          <option key={dept} value={dept}>
+                            {dept}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1.5">This role is department-specific. The user will only see students from this department.</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                        Department (optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. CSE, ECE, ME..."
+                        className="block w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm"
+                        value={newDepartment}
+                        onChange={(e) => setNewDepartment(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end space-x-3 pt-2">
@@ -385,7 +798,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                   </button>
                   <button
                     onClick={handleAssignRole}
-                    disabled={assigning || !newRole}
+                    disabled={assigning || !newRole || (DEPT_SPECIFIC_ROLES.includes(newRole) && !newDepartment)}
                     className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
                   >
                     {assigning ? "Assigning..." : "Assign Role"}
@@ -395,16 +808,28 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
             </div>
           )}
 
-          {/* Info Card */}
+          {/* ─── Info Card ─── */}
           <div className="bg-blue-50 border border-blue-200/60 rounded-2xl p-6">
             <h4 className="font-semibold text-blue-900 text-sm mb-2">How Role Assignment Works</h4>
             <ul className="text-sm text-blue-700 space-y-1.5 list-disc list-inside">
               <li>New users are automatically identified as <strong>Student</strong> or <strong>Faculty</strong> from their email.</li>
-              <li>All other roles (HOD, Library Admin, etc.) must be assigned here by the Super Admin.</li>
-              <li>Search for a user by email or name, then click &quot;Change Role&quot; to assign a new role.</li>
+              <li><strong>Universal Roles</strong> — click a role block and enter the user&apos;s email to assign Hostel Warden, Library Admin, etc.</li>
+              <li><strong>Department Roles</strong> — pick a department first, then assign HOD, Faculty, or Class Coordinator.</li>
+              <li><strong>Search &amp; Assign</strong> — look up any user by name or email to view or change their current role.</li>
               <li>Role changes take effect on the user&apos;s next login.</li>
             </ul>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (fetching) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="h-10 w-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-400 text-sm">Loading approvals...</p>
         </div>
       </div>
     );

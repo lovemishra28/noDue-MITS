@@ -13,14 +13,16 @@ export async function middleware(request: NextRequest) {
   // 2. Read session from httpOnly JWT cookie
   const session = await getSessionFromRequest(request);
 
-  // 3. If not logged in, redirect to login (except if already on /login)
+  // 3. If not logged in, redirect to login (except if already on /login or /verify-institute-email)
   if (!session) {
-    if (pathname === "/login") return NextResponse.next();
+    if (pathname === "/login" || pathname === "/verify-institute-email") {
+      return NextResponse.next();
+    }
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // 4. If logged in and on /login, redirect to their dashboard
-  if (pathname === "/login") {
+  // 4. If logged in and on /login or /verify-institute-email, redirect to their dashboard
+  if (pathname === "/login" || pathname === "/verify-institute-email") {
     if (session.role === "STUDENT") {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
@@ -78,5 +80,6 @@ export const config = {
     "/track/:path*",
     "/certificate/:path*",
     "/login",
+    "/verify-institute-email",
   ],
 };
