@@ -26,8 +26,9 @@ export async function POST(request: Request) {
       where: { email: email.toLowerCase().trim() },
     });
 
-    if (!user) {
+    if (!user || !user.password) {
       // Generic message to prevent user enumeration
+      // Also handles users who signed up with Google (no password) trying to use password login
       return NextResponse.json(
         { success: false, error: "Invalid email or password" },
         { status: 401 }
