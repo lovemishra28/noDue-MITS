@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { createToken, setSessionCookie } from "@/lib/session";
 
-const INSTITUTE_DOMAIN = "mitsgwl.in";
+const INSTITUTE_DOMAIN = "mitsgwl.ac.in";
 
 /**
  * POST /api/auth/verify-institute-email
@@ -15,12 +15,26 @@ const INSTITUTE_DOMAIN = "mitsgwl.in";
  */
 export async function POST(request: Request) {
   try {
-    const { instituteEmail } = await request.json();
+    const { instituteEmail, enrollmentNo, department } = await request.json();
 
     // --- Validate institute email ---
     if (!instituteEmail || typeof instituteEmail !== "string") {
       return NextResponse.json(
         { success: false, error: "Institute email is required" },
+        { status: 400 }
+      );
+    }
+
+    if (!enrollmentNo || typeof enrollmentNo !== "string" || !enrollmentNo.trim()) {
+      return NextResponse.json(
+        { success: false, error: "Enrollment number is required" },
+        { status: 400 }
+      );
+    }
+
+    if (!department || typeof department !== "string" || !department.trim()) {
+      return NextResponse.json(
+        { success: false, error: "Department is required" },
         { status: 400 }
       );
     }
@@ -81,6 +95,8 @@ export async function POST(request: Request) {
           data: {
             googleId: googleData.googleId,
             avatarUrl: googleData.avatarUrl || existingUser.avatarUrl,
+            enrollmentNo: enrollmentNo.toUpperCase(),
+            department,
           },
         });
 
@@ -107,6 +123,18 @@ export async function POST(request: Request) {
       return await signInAndRespond(existingUser);
     }
 
+    // --- Check if enrollment number is already taken ---
+    const existingEnrollment = await prisma.user.findUnique({
+      where: { enrollmentNo: enrollmentNo.toUpperCase() },
+    });
+
+    if (existingEnrollment) {
+      return NextResponse.json(
+        { success: false, error: "This enrollment number is already registered. Please contact support." },
+        { status: 409 }
+      );
+    }
+
     // --- Create new user with institute email ---
     const newUser = await prisma.user.create({
       data: {
@@ -114,6 +142,8 @@ export async function POST(request: Request) {
         name: googleData.googleName,
         googleId: googleData.googleId,
         avatarUrl: googleData.avatarUrl,
+        enrollmentNo: enrollmentNo.toUpperCase(),
+        department,
         role: "STUDENT",
       },
     });

@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { createToken, setSessionCookie } from "@/lib/session";
 
-const INSTITUTE_DOMAIN = "mitsgwl.in";
+const INSTITUTE_DOMAIN = "mitsgwl.ac.in";
 
 /**
  * GET /api/auth/callback
@@ -14,7 +14,7 @@ const INSTITUTE_DOMAIN = "mitsgwl.in";
  * 2. Extract Google profile (email, name, avatar, sub)
  * 3. Check if user already exists by googleId → sign in
  * 4. If not, check email domain:
- *    - @mitsgwl.in → auto-create user and sign in
+ *    - @mitsgwl.ac.in → auto-create user and sign in
  *    - Other domain → redirect to /verify-institute-email with Google data in a short-lived cookie
  */
 export async function GET(request: Request) {

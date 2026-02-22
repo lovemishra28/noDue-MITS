@@ -4,10 +4,27 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 
-const INSTITUTE_DOMAIN = "mitsgwl.in";
+const INSTITUTE_DOMAIN = "mitsgwl.ac.in";
+
+const DEPARTMENTS = [
+  "CSE",
+  "IT",
+  "ECE",
+  "EE",
+  "ME",
+  "CE",
+  "CH",
+  "MCA",
+  "MBA",
+  "PHY",
+  "MATH",
+  "HUM",
+];
 
 export default function VerifyInstituteEmailPage() {
   const [instituteEmail, setInstituteEmail] = useState("");
+  const [enrollmentNo, setEnrollmentNo] = useState("");
+  const [department, setDepartment] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
@@ -24,13 +41,27 @@ export default function VerifyInstituteEmailPage() {
       return;
     }
 
+    if (!enrollmentNo.trim()) {
+      setError("Enrollment number is required.");
+      return;
+    }
+
+    if (!department) {
+      setError("Please select your department.");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       const res = await fetch("/api/auth/verify-institute-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instituteEmail: instituteEmail.trim() }),
+        body: JSON.stringify({
+          instituteEmail: instituteEmail.trim(),
+          enrollmentNo: enrollmentNo.trim().toUpperCase(),
+          department,
+        }),
       });
 
       const data = await res.json();
@@ -41,6 +72,8 @@ export default function VerifyInstituteEmailPage() {
           name: data.user.name,
           email: data.user.email,
           role: data.user.role,
+          enrollmentNo: data.user.enrollmentNo,
+          department: data.user.department,
         });
         router.push(data.redirectPath);
       } else {
@@ -82,8 +115,8 @@ export default function VerifyInstituteEmailPage() {
               One more step&hellip;
             </h1>
             <p className="text-blue-200 text-lg max-w-md leading-relaxed">
-              We need your institute email address to verify your identity and
-              link it with your Google account.
+              Provide your institute email, enrollment number, and department to
+              verify your identity and link it with your Google account.
             </p>
           </div>
 
@@ -124,10 +157,10 @@ export default function VerifyInstituteEmailPage() {
 
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-gray-900">
-                Verify Institute Email
+                Complete Your Profile
               </h2>
               <p className="text-sm text-gray-500 mt-1">
-                Link your Google account with your MITS email
+                Link your Google account with your MITS institute details
               </p>
             </div>
 
@@ -159,6 +192,56 @@ export default function VerifyInstituteEmailPage() {
                     value={instituteEmail}
                     onChange={(e) => setInstituteEmail(e.target.value)}
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                  Enrollment Number
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2" />
+                    </svg>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 uppercase"
+                    placeholder="e.g. 0101CS221001"
+                    value={enrollmentNo}
+                    onChange={(e) => setEnrollmentNo(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                  Department
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                  </div>
+                  <select
+                    required
+                    className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 appearance-none"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                  >
+                    <option value="" disabled>Select your department</option>
+                    {DEPARTMENTS.map((dept) => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                    <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
                 </div>
               </div>
 
