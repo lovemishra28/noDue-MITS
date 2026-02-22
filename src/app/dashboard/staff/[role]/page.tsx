@@ -18,6 +18,30 @@ const ROLE_TO_DEPT: Record<string, { department: string; stage: number }> = {
   accounts_officer: { department: "Accounts Office", stage: 9 },
 };
 
+// All roles that can be assigned by Super Admin
+const ASSIGNABLE_ROLES = [
+  { value: "STUDENT", label: "Student" },
+  { value: "FACULTY", label: "Faculty" },
+  { value: "CLASS_COORDINATOR", label: "Class Coordinator" },
+  { value: "HOD", label: "Head of Department" },
+  { value: "HOSTEL_WARDEN", label: "Hostel Warden" },
+  { value: "LIBRARY_ADMIN", label: "Library Admin" },
+  { value: "WORKSHOP_ADMIN", label: "Workshop Admin" },
+  { value: "TP_OFFICER", label: "T&P Officer" },
+  { value: "GENERAL_OFFICE", label: "General Office" },
+  { value: "ACCOUNTS_OFFICER", label: "Accounts Officer" },
+];
+
+interface SearchedUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  department: string | null;
+  enrollmentNo: string | null;
+  createdAt: string;
+}
+
 interface ApprovalItem {
   id: string;
   department: string;
@@ -43,6 +67,16 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [approvedCount, setApprovedCount] = useState(0);
   const [rejectedCount, setRejectedCount] = useState(0);
+
+  // Super Admin state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchedUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<SearchedUser | null>(null);
+  const [newRole, setNewRole] = useState("");
+  const [newDepartment, setNewDepartment] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const [adminMessage, setAdminMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const deptInfo = ROLE_TO_DEPT[role];
   const roleName = getRoleName(role.toUpperCase());
@@ -116,26 +150,260 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
 
   // Super Admin view
   if (role === "super_admin") {
+    const handleSearch = async () => {
+      if (!searchQuery.trim() || searchQuery.trim().length < 2) return;
+      setSearching(true);
+      setAdminMessage(null);
+      try {
+        const res = await fetch(`/api/admin/users?search=${encodeURIComponent(searchQuery.trim())}`);
+        const data = await res.json();
+        if (data.success) {
+          setSearchResults(data.data);
+          if (data.data.length === 0) {
+            setAdminMessage({ type: "error", text: "No users found matching your search." });
+          }
+        } else {
+          setAdminMessage({ type: "error", text: data.error || "Search failed" });
+        }
+      } catch {
+        setAdminMessage({ type: "error", text: "Failed to search users" });
+      } finally {
+        setSearching(false);
+      }
+    };
+
+    const handleAssignRole = async () => {
+      if (!selectedUser || !newRole) return;
+      setAssigning(true);
+      setAdminMessage(null);
+      try {
+        const res = await fetch("/api/admin/users", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: selectedUser.id,
+            role: newRole,
+            department: newDepartment || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAdminMessage({ type: "success", text: data.message });
+          // Update the search results inline
+          setSearchResults((prev) =>
+            prev.map((u) =>
+              u.id === selectedUser.id
+                ? { ...u, role: newRole, department: newDepartment || u.department }
+                : u
+            )
+          );
+          setSelectedUser(null);
+          setNewRole("");
+          setNewDepartment("");
+        } else {
+          setAdminMessage({ type: "error", text: data.error || "Failed to assign role" });
+        }
+      } catch {
+        setAdminMessage({ type: "error", text: "Something went wrong" });
+      } finally {
+        setAssigning(false);
+      }
+    };
+
     return (
       <div className="min-h-screen">
-        <PageHeader title="Super Admin Panel" subtitle="System administration and monitoring" />
+        <PageHeader title="Super Admin Panel" subtitle="Manage user roles and system administration" />
         <div className="p-6 lg:p-8 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-6 rounded-2xl border border-gray-200/60 shadow-sm">
-              <p className="text-sm text-gray-400 font-medium">Total Users</p>
-              <p className="text-3xl font-bold text-blue-600 mt-1">&mdash;</p>
+
+          {/* Status Message */}
+          {adminMessage && (
+            <div className={`p-4 rounded-xl text-sm font-medium border ${
+              adminMessage.type === "success"
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-red-50 text-red-700 border-red-200"
+            }`}>
+              {adminMessage.text}
             </div>
-            <div className="bg-white p-6 rounded-2xl border border-gray-200/60 shadow-sm">
-              <p className="text-sm text-gray-400 font-medium">Active Applications</p>
-              <p className="text-3xl font-bold text-amber-600 mt-1">&mdash;</p>
-            </div>
-            <div className="bg-white p-6 rounded-2xl border border-gray-200/60 shadow-sm">
-              <p className="text-sm text-gray-400 font-medium">Certificates Issued</p>
-              <p className="text-3xl font-bold text-emerald-600 mt-1">&mdash;</p>
+          )}
+
+          {/* Search Section */}
+          <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Search & Assign Roles</h3>
+            <p className="text-sm text-gray-400 mb-5">
+              Search for a user by email or name, then assign them a specific role.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search by email or name..."
+                  className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                />
+              </div>
+              <button
+                onClick={handleSearch}
+                disabled={searching || searchQuery.trim().length < 2}
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm shrink-0"
+              >
+                {searching ? "Searching..." : "Search"}
+              </button>
             </div>
           </div>
-          <div className="bg-white rounded-2xl border border-gray-200/60 p-8 text-center text-gray-400 shadow-sm">
-            <p>Super Admin management views coming soon.</p>
+
+          {/* Search Results */}
+          {searchResults.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-100">
+                <h3 className="text-base font-bold text-gray-900">
+                  Search Results ({searchResults.length})
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50/80 border-b border-gray-100">
+                    <tr>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Current Role</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Department</th>
+                      <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100/80">
+                    {searchResults.map((u) => (
+                      <tr key={u.id} className="hover:bg-gray-50/60 transition-colors">
+                        <td className="px-6 py-4">
+                          <p className="font-medium text-sm text-gray-900">{u.name}</p>
+                          {u.enrollmentNo && (
+                            <p className="text-xs text-gray-400 mt-0.5">{u.enrollmentNo}</p>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">{u.email}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            u.role === "STUDENT"
+                              ? "bg-blue-50 text-blue-700"
+                              : u.role === "FACULTY"
+                              ? "bg-indigo-50 text-indigo-700"
+                              : "bg-amber-50 text-amber-700"
+                          }`}>
+                            {getRoleName(u.role)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">{u.department || "—"}</td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => {
+                              setSelectedUser(u);
+                              setNewRole(u.role);
+                              setNewDepartment(u.department || "");
+                              setAdminMessage(null);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 text-sm font-semibold transition-colors"
+                          >
+                            Change Role
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Role Assignment Modal */}
+          {selectedUser && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Assign Role</h3>
+                  <p className="text-sm text-gray-400 mt-1">
+                    Change the role for <span className="font-semibold text-gray-700">{selectedUser.name}</span> ({selectedUser.email})
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                      Current Role
+                    </label>
+                    <p className="text-sm text-gray-900 bg-gray-50 px-4 py-2.5 rounded-xl border border-gray-200">
+                      {getRoleName(selectedUser.role)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                      New Role
+                    </label>
+                    <select
+                      value={newRole}
+                      onChange={(e) => setNewRole(e.target.value)}
+                      className="block w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm"
+                    >
+                      {ASSIGNABLE_ROLES.map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                      Department (optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. CSE, ECE, ME..."
+                      className="block w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 text-sm"
+                      value={newDepartment}
+                      onChange={(e) => setNewDepartment(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-3 pt-2">
+                  <button
+                    onClick={() => {
+                      setSelectedUser(null);
+                      setNewRole("");
+                      setNewDepartment("");
+                    }}
+                    className="px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAssignRole}
+                    disabled={assigning || !newRole}
+                    className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                  >
+                    {assigning ? "Assigning..." : "Assign Role"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Info Card */}
+          <div className="bg-blue-50 border border-blue-200/60 rounded-2xl p-6">
+            <h4 className="font-semibold text-blue-900 text-sm mb-2">How Role Assignment Works</h4>
+            <ul className="text-sm text-blue-700 space-y-1.5 list-disc list-inside">
+              <li>New users are automatically identified as <strong>Student</strong> or <strong>Faculty</strong> from their email.</li>
+              <li>All other roles (HOD, Library Admin, etc.) must be assigned here by the Super Admin.</li>
+              <li>Search for a user by email or name, then click &quot;Change Role&quot; to assign a new role.</li>
+              <li>Role changes take effect on the user&apos;s next login.</li>
+            </ul>
           </div>
         </div>
       </div>

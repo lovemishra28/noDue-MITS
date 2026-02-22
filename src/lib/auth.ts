@@ -42,6 +42,10 @@ export function isStudent(role: string) {
   return role === "STUDENT";
 }
 
+export function isSuperAdmin(role: string) {
+  return role === "SUPER_ADMIN";
+}
+
 export function isStaff(role: string) {
   return role !== "STUDENT" && role !== "SUPER_ADMIN";
 }

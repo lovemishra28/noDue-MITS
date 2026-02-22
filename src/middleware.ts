@@ -45,12 +45,17 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  // 7. Prevent Students from accessing /dashboard/staff
+  // 7. Prevent non-Super-Admin from accessing Super Admin dashboard
   if (
-    pathname.startsWith("/dashboard/staff") &&
-    session.role === "STUDENT"
+    pathname.startsWith("/dashboard/staff/super_admin") &&
+    session.role !== "SUPER_ADMIN"
   ) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    if (session.role === "STUDENT") {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    return NextResponse.redirect(
+      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
+    );
   }
 
   // 8. Prevent Staff from accessing Student dashboard (/dashboard exactly)

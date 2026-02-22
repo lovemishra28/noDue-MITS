@@ -362,7 +362,7 @@ export default function ApplyNoDues() {
                     type="email"
                     required
                     className={fieldErrors.email ? inputErrorClasses : inputClasses}
-                    placeholder="name@mitsgwalior.in"
+                    placeholder="name@mitsgwl.ac.in"
                     value={formData.email}
                     onChange={(e) => update("email", e.target.value)}
                   />

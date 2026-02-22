@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -12,18 +12,43 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 const DEFAULT_PASSWORD = "Test@1234";
+const SUPER_ADMIN_PASSWORD = "Admin@mits2024";
 
 async function main() {
   console.log("🌱 Seeding database...\n");
 
-  const hashedPassword = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+  // Clean up existing data in correct order to respect foreign keys
+  try {
+    await prisma.approval.deleteMany({});
+    await prisma.application.deleteMany({});
+    await prisma.user.deleteMany({});
+    console.log("🧹 Cleared existing data");
+  } catch (e) {
+    console.log("⚠️ Could not clear data", e);
+  }
 
-  // 1. Student account
+  const hashedPassword = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+  const hashedAdminPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
+
+  // ─── 1. Super Admin (dedicated separate account with its own password) ───
+  const admin = await prisma.user.upsert({
+    where: { email: "superadmin@mitsgwl.ac.in" },
+    update: { password: hashedAdminPassword },
+    create: {
+      email: "superadmin@mitsgwl.ac.in",
+      name: "System Admin",
+      role: "SUPER_ADMIN",
+      password: hashedAdminPassword,
+    },
+  });
+  console.log(`✅ Super Admin: ${admin.email} (password: ${SUPER_ADMIN_PASSWORD})`);
+
+  // ─── 2. Student (role detected from email) ───
   const student = await prisma.user.upsert({
-    where: { email: "student@mitsgwalior.in" },
+    where: { email: "student@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "student@mitsgwalior.in",
+      email: "student@mitsgwl.ac.in",
       name: "Love Mishra",
       role: "STUDENT",
       enrollmentNo: "0108CS221001",
@@ -31,14 +56,14 @@ async function main() {
       password: hashedPassword,
     },
   });
-  console.log(`✅ Student: ${student.email} (id: ${student.id})`);
+  console.log(`✅ Student: ${student.email}`);
 
-  // 2. Faculty
+  // ─── 3. Faculty (role detected from email) ───
   const faculty = await prisma.user.upsert({
-    where: { email: "faculty@mitsgwalior.in" },
+    where: { email: "faculty@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "faculty@mitsgwalior.in",
+      email: "faculty@mitsgwl.ac.in",
       name: "Dr. Rajesh Kumar",
       role: "FACULTY",
       department: "CSE",
@@ -47,12 +72,15 @@ async function main() {
   });
   console.log(`✅ Faculty: ${faculty.email}`);
 
-  // 3. Class Coordinator
+  // ─── Below users demonstrate roles assigned by Super Admin ───
+  // In production, these would first register as FACULTY,
+  // then the Super Admin promotes them to their specific role.
+
   const cc = await prisma.user.upsert({
-    where: { email: "coordinator@mitsgwalior.in" },
+    where: { email: "coordinator@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "coordinator@mitsgwalior.in",
+      email: "coordinator@mitsgwl.ac.in",
       name: "Prof. Neha Gupta",
       role: "CLASS_COORDINATOR",
       department: "CSE",
@@ -61,12 +89,11 @@ async function main() {
   });
   console.log(`✅ Class Coordinator: ${cc.email}`);
 
-  // 4. HOD
   const hod = await prisma.user.upsert({
-    where: { email: "hod@mitsgwalior.in" },
+    where: { email: "hod@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "hod@mitsgwalior.in",
+      email: "hod@mitsgwl.ac.in",
       name: "Dr. Amit Sharma",
       role: "HOD",
       department: "CSE",
@@ -75,12 +102,11 @@ async function main() {
   });
   console.log(`✅ HOD: ${hod.email}`);
 
-  // 5. Hostel Warden
   const warden = await prisma.user.upsert({
-    where: { email: "warden@mitsgwalior.in" },
+    where: { email: "warden@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "warden@mitsgwalior.in",
+      email: "warden@mitsgwl.ac.in",
       name: "Mr. Suresh Patel",
       role: "HOSTEL_WARDEN",
       password: hashedPassword,
@@ -88,12 +114,11 @@ async function main() {
   });
   console.log(`✅ Hostel Warden: ${warden.email}`);
 
-  // 6. Library Admin
   const library = await prisma.user.upsert({
-    where: { email: "library@mitsgwalior.in" },
+    where: { email: "library@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "library@mitsgwalior.in",
+      email: "library@mitsgwl.ac.in",
       name: "Mrs. Sunita Verma",
       role: "LIBRARY_ADMIN",
       password: hashedPassword,
@@ -101,12 +126,11 @@ async function main() {
   });
   console.log(`✅ Library Admin: ${library.email}`);
 
-  // 7. Workshop Admin
   const workshop = await prisma.user.upsert({
-    where: { email: "workshop@mitsgwalior.in" },
+    where: { email: "workshop@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "workshop@mitsgwalior.in",
+      email: "workshop@mitsgwl.ac.in",
       name: "Mr. Ramesh Yadav",
       role: "WORKSHOP_ADMIN",
       password: hashedPassword,
@@ -114,12 +138,11 @@ async function main() {
   });
   console.log(`✅ Workshop Admin: ${workshop.email}`);
 
-  // 8. T&P Officer
   const tp = await prisma.user.upsert({
-    where: { email: "tnp@mitsgwalior.in" },
+    where: { email: "tnp@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "tnp@mitsgwalior.in",
+      email: "tnp@mitsgwl.ac.in",
       name: "Dr. Priya Singh",
       role: "TP_OFFICER",
       password: hashedPassword,
@@ -127,12 +150,11 @@ async function main() {
   });
   console.log(`✅ T&P Officer: ${tp.email}`);
 
-  // 9. General Office
   const office = await prisma.user.upsert({
-    where: { email: "office@mitsgwalior.in" },
+    where: { email: "office@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "office@mitsgwalior.in",
+      email: "office@mitsgwl.ac.in",
       name: "Mr. Vikram Joshi",
       role: "GENERAL_OFFICE",
       password: hashedPassword,
@@ -140,12 +162,11 @@ async function main() {
   });
   console.log(`✅ General Office: ${office.email}`);
 
-  // 10. Accounts Officer
   const accounts = await prisma.user.upsert({
-    where: { email: "accounts@mitsgwalior.in" },
+    where: { email: "accounts@mitsgwl.ac.in" },
     update: { password: hashedPassword },
     create: {
-      email: "accounts@mitsgwalior.in",
+      email: "accounts@mitsgwl.ac.in",
       name: "Mrs. Kavita Dubey",
       role: "ACCOUNTS_OFFICER",
       password: hashedPassword,
@@ -153,21 +174,9 @@ async function main() {
   });
   console.log(`✅ Accounts Officer: ${accounts.email}`);
 
-  // 11. Super Admin
-  const admin = await prisma.user.upsert({
-    where: { email: "admin@mitsgwalior.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "admin@mitsgwalior.in",
-      name: "System Admin",
-      role: "SUPER_ADMIN",
-      password: hashedPassword,
-    },
-  });
-  console.log(`✅ Super Admin: ${admin.email}`);
-
   console.log(`\n🎉 Seeding complete!`);
-  console.log(`📝 All users have password: ${DEFAULT_PASSWORD}\n`);
+  console.log(`📝 Default users password: ${DEFAULT_PASSWORD}`);
+  console.log(`📝 Super Admin password: ${SUPER_ADMIN_PASSWORD}\n`);
 }
 
 main()

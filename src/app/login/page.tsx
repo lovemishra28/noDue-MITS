@@ -60,7 +60,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex">
       {/* ─── Left Panel: College Branding ─── */}
-      <div className="hidden lg:flex lg:w-1/2 relative bg-blue-900 overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 relative bg-blue-800 overflow-hidden">
         {/* Background image with overlay */}
         <img
           src="./assets/mits.png"
@@ -91,25 +91,10 @@ export default function LoginPage() {
               Technology &amp; Science
             </h1>
             <p className="text-blue-200 text-lg max-w-md leading-relaxed">
-              Streamline your No-Dues clearance process. Track approvals 
-              from all departments in one place — fast, transparent, and paperless.
+              Track approvals 
+              from all departments in one place: fast, transparent, and paperless.
             </p>
 
-            {/* Stats row */}
-            <div className="flex space-x-8 pt-4">
-              <div>
-                <p className="text-3xl font-bold text-white">9</p>
-                <p className="text-blue-300 text-sm">Departments</p>
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-white">100%</p>
-                <p className="text-blue-300 text-sm">Paperless</p>
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-white">24/7</p>
-                <p className="text-blue-300 text-sm">Access</p>
-              </div>
-            </div>
           </div>
 
           {/* Bottom: Footer */}
@@ -168,7 +153,7 @@ export default function LoginPage() {
                     type="email"
                     required
                     className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900"
-                    placeholder="name@mitsgwalior.in"
+                    placeholder="name@mitsgwl.ac.in"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                   />

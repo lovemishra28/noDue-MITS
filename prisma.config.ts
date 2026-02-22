@@ -8,4 +8,7 @@ export default defineConfig({
     // need a direct connection to create tables in Supabase.
     url: env("DIRECT_URL"),
   },
+  migrations: {
+    seed: "tsx prisma/seed.ts",
+  },
 });
