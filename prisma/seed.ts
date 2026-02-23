@@ -1,5 +1,5 @@
 ﻿import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma, UserRole } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createClient } from "@supabase/supabase-js";
@@ -28,7 +28,7 @@ async function createUser(opts: {
   email: string;
   password: string;
   name: string;
-  role: string;
+  role: UserRole;
   department?: string;
   enrollmentNo?: string;
 }) {
@@ -75,15 +75,8 @@ async function createUser(opts: {
 
   await prisma.user.upsert({
     where: { email: opts.email },
-    update: prismaData,
-    create: prismaData as {
-      id: string;
-      email: string;
-      name: string;
-      role: string;
-      department?: string;
-      enrollmentNo?: string;
-    },
+    update: prismaData as Prisma.UserUpdateInput,
+    create: prismaData as Prisma.UserCreateInput,
   });
 
   return supabaseUid;
