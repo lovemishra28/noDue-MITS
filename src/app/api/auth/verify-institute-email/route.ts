@@ -18,10 +18,14 @@ import { UserRole } from "@prisma/client";
  */
 export async function POST(request: Request) {
   try {
-    const { enrollmentNo, department, instituteEmail } = await request.json();
+    const body = await request.json();
+    const { enrollmentNo, department, instituteEmail } = body;
+    
+    console.log("📝 Verify institute email request:", { enrollmentNo: enrollmentNo ? "***" : undefined, department, instituteEmail: instituteEmail ? "***" : undefined });
 
     // --- Validate department (required for both roles) ---
     if (!department || typeof department !== "string" || !department.trim()) {
+      console.warn("⚠️  Department validation failed");
       return NextResponse.json(
         { success: false, error: "Department is required" },
         { status: 400 }
@@ -33,6 +37,7 @@ export async function POST(request: Request) {
     const pendingCookie = cookieStore.get("pending_google_auth")?.value;
 
     if (!pendingCookie) {
+      console.warn("⚠️  No pending_google_auth cookie found");
       return NextResponse.json(
         {
           success: false,
@@ -51,7 +56,9 @@ export async function POST(request: Request) {
 
     try {
       googleData = JSON.parse(pendingCookie);
+      console.log("✅ Google data parsed from cookie:", { email: googleData.googleEmail, uid: googleData.supabaseUid });
     } catch {
+      console.error("❌ Failed to parse pending_google_auth cookie");
       return NextResponse.json(
         { success: false, error: "Invalid session data. Please try again." },
         { status: 400 }
@@ -65,13 +72,17 @@ export async function POST(request: Request) {
     let role: UserRole;
     let finalEmail = emailLower;
 
+    console.log("🔍 Determining role from email domain:", domain);
+
     if (domain === "mitsgwl.ac.in") {
       role = "STUDENT" as UserRole;
     } else if (domain === "mitsgwl.com") {
       role = "FACULTY" as UserRole;
     } else {
       // External email — user must provide their institute email
+      console.log("📧 External email detected, requiring institute email");
       if (!instituteEmail || typeof instituteEmail !== "string" || !instituteEmail.trim()) {
+        console.warn("⚠️  Institute email required but not provided");
         return NextResponse.json(
           {
             success: false,
@@ -83,12 +94,14 @@ export async function POST(request: Request) {
 
       const instEmailLower = instituteEmail.toLowerCase().trim();
       const instDomain = instEmailLower.split("@")[1];
+      console.log("📧 Institute email domain:", instDomain);
 
       if (instDomain === "mitsgwl.ac.in") {
         role = "STUDENT" as UserRole;
       } else if (instDomain === "mitsgwl.com") {
         role = "FACULTY" as UserRole;
       } else {
+        console.warn("⚠️  Invalid institute email domain:", instDomain);
         return NextResponse.json(
           {
             success: false,
@@ -103,6 +116,7 @@ export async function POST(request: Request) {
         where: { email: instEmailLower },
       });
       if (existingInstEmail && existingInstEmail.id !== googleData.supabaseUid) {
+        console.warn("⚠️  Institute email already registered:", instEmailLower);
         return NextResponse.json(
           {
             success: false,
@@ -116,9 +130,13 @@ export async function POST(request: Request) {
       finalEmail = instEmailLower;
     }
 
+    console.log("✅ Role determined:", role, "Final email:", finalEmail);
+
     // --- Validate enrollmentNo for students ---
     if (role === "STUDENT") {
+      console.log("🎓 Validating enrollment for student");
       if (!enrollmentNo || typeof enrollmentNo !== "string" || !enrollmentNo.trim()) {
+        console.warn("⚠️  Enrollment number required but not provided");
         return NextResponse.json(
           { success: false, error: "Enrollment number is required for students" },
           { status: 400 }
@@ -131,6 +149,7 @@ export async function POST(request: Request) {
       });
 
       if (existingEnrollment && existingEnrollment.id !== googleData.supabaseUid) {
+        console.warn("⚠️  Enrollment number already taken:", enrollmentNo.toUpperCase());
         return NextResponse.json(
           {
             success: false,
@@ -142,13 +161,16 @@ export async function POST(request: Request) {
     }
 
     // --- Check if email is already taken ---
+    console.log("🔍 Checking if email exists:", finalEmail);
     const existingUser = await prisma.user.findUnique({
       where: { email: finalEmail },
     });
 
     if (existingUser) {
+      console.log("👤 Existing user found with email:", finalEmail);
       // If the account exists but has a different Supabase UID, reject
       if (existingUser.id !== googleData.supabaseUid) {
+        console.warn("⚠️  Email conflict: existing UID", existingUser.id, "!= new UID", googleData.supabaseUid);
         return NextResponse.json(
           {
             success: false,
@@ -159,6 +181,7 @@ export async function POST(request: Request) {
       }
 
       // Same Supabase UID — just update and sign in
+      console.log("✅ Same user, updating existing record");
       const updateData: Record<string, unknown> = {
         avatarUrl: googleData.avatarUrl || existingUser.avatarUrl,
         department,
@@ -179,6 +202,7 @@ export async function POST(request: Request) {
     }
 
     // --- Create new user ---
+    console.log("📝 Creating new user:", { email: finalEmail, role, supabaseUid: googleData.supabaseUid });
     const newUser = await prisma.user.create({
       data: {
         id: googleData.supabaseUid,
@@ -190,15 +214,19 @@ export async function POST(request: Request) {
         ...(role === "STUDENT" && enrollmentNo && { enrollmentNo: enrollmentNo.toUpperCase() }),
       },
     });
+    console.log("✅ New user created successfully");
 
     // Clean up the pending cookie
     cookieStore.delete("pending_google_auth");
 
     return signInAndRespond(newUser);
   } catch (error) {
-    console.error("Verify institute email error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : "";
+    console.error("❌ Verify institute email error:", errorMessage);
+    console.error("Stack trace:", errorStack);
     return NextResponse.json(
-      { success: false, error: "Something went wrong. Please try again." },
+      { success: false, error: "Something went wrong. Please try again.", details: errorMessage },
       { status: 500 }
     );
   }
@@ -213,6 +241,8 @@ function signInAndRespond(user: {
   enrollmentNo: string | null;
   department: string | null;
 }) {
+  console.log("🔐 signInAndRespond called for user:", user.email, "role:", user.role);
+  
   let redirectPath = "/dashboard";
   if (user.role === "STUDENT") {
     redirectPath = "/dashboard";
@@ -221,6 +251,8 @@ function signInAndRespond(user: {
   } else {
     redirectPath = `/dashboard/staff/${user.role.toLowerCase()}`;
   }
+
+  console.log("✅ Response prepared. Redirect path:", redirectPath);
 
   return NextResponse.json({
     success: true,
