@@ -1,10 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-
-const INSTITUTE_DOMAIN = "mitsgwl.ac.in";
 
 const DEPARTMENTS = [
   "CSE",
@@ -21,28 +19,58 @@ const DEPARTMENTS = [
   "HUM",
 ];
 
-export default function VerifyInstituteEmailPage() {
-  const [instituteEmail, setInstituteEmail] = useState("");
+function VerifyForm() {
+  const searchParams = useSearchParams();
+  const userType = searchParams.get("type"); // "student" | "faculty" | "external"
+  const isStudent = userType === "student";
+  const isFaculty = userType === "faculty";
+  const isExternal = userType === "external";
+
   const [enrollmentNo, setEnrollmentNo] = useState("");
   const [department, setDepartment] = useState("");
+  const [instituteEmail, setInstituteEmail] = useState("");
+  const [detectedRole, setDetectedRole] = useState<"student" | "faculty" | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { login } = useAuth();
 
+  // If neither student nor faculty nor external, show error
+  if (!isStudent && !isFaculty && !isExternal) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-6">
+        <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 max-w-md text-center">
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Invalid Request</h2>
+          <p className="text-gray-500 text-sm mb-6">
+            Could not determine your account type. Please sign in again.
+          </p>
+          <a
+            href="/login"
+            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+          >
+            &larr; Back to Sign In
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    // Client-side domain check
-    const domain = instituteEmail.trim().split("@")[1]?.toLowerCase();
-    if (domain !== INSTITUTE_DOMAIN) {
-      setError(`Please enter a valid @${INSTITUTE_DOMAIN} email address.`);
+    if (isStudent && !enrollmentNo.trim()) {
+      setError("Enrollment number is required for students.");
       return;
     }
 
-    if (!enrollmentNo.trim()) {
-      setError("Enrollment number is required.");
+    if (isExternal && !instituteEmail.trim()) {
+      setError("Please enter your institute email (@mitsgwl.ac.in or @mitsgwl.com).");
+      return;
+    }
+
+    if (isExternal && detectedRole === "student" && !enrollmentNo.trim()) {
+      setError("Enrollment number is required for students.");
       return;
     }
 
@@ -58,9 +86,9 @@ export default function VerifyInstituteEmailPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          instituteEmail: instituteEmail.trim(),
-          enrollmentNo: enrollmentNo.trim().toUpperCase(),
+          enrollmentNo: (isStudent || detectedRole === "student") ? enrollmentNo.trim().toUpperCase() : undefined,
           department,
+          instituteEmail: isExternal ? instituteEmail.trim() : undefined,
         }),
       });
 
@@ -86,9 +114,19 @@ export default function VerifyInstituteEmailPage() {
     }
   };
 
+  const showStudentFields = isStudent || detectedRole === "student";
+  const roleLabel = isExternal
+    ? detectedRole === "student" ? "Student" : detectedRole === "faculty" ? "Faculty" : "External"
+    : isStudent ? "Student" : "Faculty";
+  const roleBadgeColor = (isStudent || detectedRole === "student")
+    ? "bg-green-50 text-green-700 border-green-200"
+    : (isFaculty || detectedRole === "faculty")
+      ? "bg-purple-50 text-purple-700 border-purple-200"
+      : "bg-yellow-50 text-yellow-700 border-yellow-200";
+
   return (
     <div className="min-h-screen flex">
-      {/* ─── Left Panel: College Branding (same as login) ─── */}
+      {/* ─── Left Panel: College Branding ─── */}
       <div className="hidden lg:flex lg:w-1/2 relative bg-blue-800 overflow-hidden">
         <img
           src="./assets/mits.png"
@@ -115,8 +153,11 @@ export default function VerifyInstituteEmailPage() {
               One more step&hellip;
             </h1>
             <p className="text-blue-200 text-lg max-w-md leading-relaxed">
-              Provide your institute email, enrollment number, and department to
-              verify your identity and link it with your Google account.
+              {isStudent
+                ? "Provide your enrollment number and department to complete your student profile."
+                : isExternal
+                  ? "Enter your official institute email and details to complete your profile."
+                  : "Select your department to complete your faculty profile."}
             </p>
           </div>
 
@@ -130,7 +171,7 @@ export default function VerifyInstituteEmailPage() {
         </div>
       </div>
 
-      {/* ─── Right Panel: Institute Email Form ─── */}
+      {/* ─── Right Panel: Profile Completion Form ─── */}
       <div className="w-full lg:w-1/2 flex items-center justify-center bg-linear-to-br from-gray-50 via-white to-blue-50 px-6 py-12">
         <div className="w-full max-w-md">
           {/* Mobile branding */}
@@ -143,24 +184,34 @@ export default function VerifyInstituteEmailPage() {
           </div>
 
           <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-xl border border-gray-100">
+            {/* Role badge */}
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  Complete Your Profile
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Fill in the details below to finish sign-up
+                </p>
+              </div>
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${roleBadgeColor}`}
+              >
+                {roleLabel}
+              </span>
+            </div>
+
             {/* Info banner */}
             <div className="mb-6 flex items-start space-x-3 bg-blue-50 border border-blue-100 rounded-xl p-4">
               <svg className="h-5 w-5 text-blue-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-sm text-blue-700">
-                Your Google account isn&apos;t an institute email. Please enter
-                your <strong>@{INSTITUTE_DOMAIN}</strong> email to complete
-                sign-in.
-              </p>
-            </div>
-
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-gray-900">
-                Complete Your Profile
-              </h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Link your Google account with your MITS institute details
+                {isStudent
+                  ? "Your email was identified as a student account. Please provide your enrollment number and department."
+                  : isFaculty
+                    ? "Your email was identified as a faculty account. Please select your department to proceed."
+                    : "Your Google email is not an institute email. Please enter your official institute email below."}
               </p>
             </div>
 
@@ -174,48 +225,69 @@ export default function VerifyInstituteEmailPage() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
-                  Institute Email
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
+              {/* Institute Email — External users only */}
+              {isExternal && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                    Institute Email
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900"
+                      placeholder="e.g. yourname@mitsgwl.ac.in or yourname@mitsgwl.com"
+                      value={instituteEmail}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setInstituteEmail(val);
+                        const emailDomain = val.toLowerCase().trim().split("@")[1];
+                        if (emailDomain === "mitsgwl.ac.in") {
+                          setDetectedRole("student");
+                        } else if (emailDomain === "mitsgwl.com") {
+                          setDetectedRole("faculty");
+                        } else {
+                          setDetectedRole(null);
+                        }
+                      }}
+                    />
                   </div>
-                  <input
-                    type="email"
-                    required
-                    className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900"
-                    placeholder={`name@${INSTITUTE_DOMAIN}`}
-                    value={instituteEmail}
-                    onChange={(e) => setInstituteEmail(e.target.value)}
-                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Enter your official MITS email (@mitsgwl.ac.in for students, @mitsgwl.com for faculty)
+                  </p>
                 </div>
-              </div>
+              )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
-                  Enrollment Number
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2" />
-                    </svg>
+              {/* Enrollment Number — Students only */}
+              {showStudentFields && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
+                    Enrollment Number
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2" />
+                      </svg>
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 uppercase"
+                      placeholder="e.g. 0101CS221001"
+                      value={enrollmentNo}
+                      onChange={(e) => setEnrollmentNo(e.target.value)}
+                    />
                   </div>
-                  <input
-                    type="text"
-                    required
-                    className="block w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white outline-none transition-all text-gray-900 uppercase"
-                    placeholder="e.g. 0101CS221001"
-                    value={enrollmentNo}
-                    onChange={(e) => setEnrollmentNo(e.target.value)}
-                  />
                 </div>
-              </div>
+              )}
 
+              {/* Department — Both roles */}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">
                   Department
@@ -256,10 +328,10 @@ export default function VerifyInstituteEmailPage() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    <span>Verifying...</span>
+                    <span>Completing sign-up...</span>
                   </div>
                 ) : (
-                  "Verify & Sign In"
+                  "Complete Sign-Up"
                 )}
               </button>
             </form>
@@ -281,5 +353,13 @@ export default function VerifyInstituteEmailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function VerifyInstituteEmailPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <VerifyForm />
+    </Suspense>
   );
 }

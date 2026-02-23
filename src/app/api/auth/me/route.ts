@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "@/lib/session";
+import { getSessionWithPrisma } from "@/lib/supabase/server";
 
-// GET /api/auth/me — Returns the current user from the JWT cookie
+// GET /api/auth/me — Returns the current user from Supabase auth + Prisma
 export async function GET() {
-  const session = await getServerSession();
+  const user = await getSessionWithPrisma();
 
-  if (!session) {
+  if (!user) {
     return NextResponse.json(
       { success: false, error: "Not authenticated" },
       { status: 401 }
@@ -15,12 +15,12 @@ export async function GET() {
   return NextResponse.json({
     success: true,
     user: {
-      id: session.userId,
-      name: session.name,
-      email: session.email,
-      role: session.role,
-      enrollmentNo: session.enrollmentNo,
-      department: session.department,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      enrollmentNo: user.enrollmentNo,
+      department: user.department,
     },
   });
 }

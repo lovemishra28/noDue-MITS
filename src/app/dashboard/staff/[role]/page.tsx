@@ -18,24 +18,33 @@ const ROLE_TO_DEPT: Record<string, { department: string; stage: number }> = {
   accounts_officer: { department: "Accounts Office", stage: 9 },
 };
 
-// Institute departments
+// Institute departments — value is stored in DB, label is shown in UI
 const DEPARTMENTS = [
-  "Civil Engineering",
-  "Mechanical Engineering",
-  "Electrical Engineering",
-  "Electronics Engineering",
-  "Computer Science & Engineering",
-  "Information Technology",
-  "Centre for Artificial Intelligence",
-  "Centre for Internet of Things",
-  "Engineering Mathematics & Computing",
-  "Centre for Computer Science and Technology",
-  "Chemical Engineering",
-  "Architecture & Planning",
-  "Applied Science",
-  "Humanities and Management",
-  "Electronics and Telecommunications Engineering",
+  { value: "CE", label: "Civil Engineering" },
+  { value: "ME", label: "Mechanical Engineering" },
+  { value: "EE", label: "Electrical Engineering" },
+  { value: "ECE", label: "Electronics Engineering" },
+  { value: "CSE", label: "Computer Science & Engineering" },
+  { value: "IT", label: "Information Technology" },
+  { value: "CAI", label: "Centre for Artificial Intelligence" },
+  { value: "CIoT", label: "Centre for Internet of Things" },
+  { value: "EMC", label: "Engineering Mathematics & Computing" },
+  { value: "CCST", label: "Centre for Computer Science and Technology" },
+  { value: "CH", label: "Chemical Engineering" },
+  { value: "ARCH", label: "Architecture & Planning" },
+  { value: "AS", label: "Applied Science" },
+  { value: "HUM", label: "Humanities and Management" },
+  { value: "ETCE", label: "Electronics and Telecommunications Engineering" },
+  { value: "MCA", label: "MCA" },
+  { value: "MBA", label: "MBA" },
+  { value: "PHY", label: "Physics" },
+  { value: "MATH", label: "Mathematics" },
 ];
+
+// Lookup helper: code → label
+const DEPT_LABEL_MAP: Record<string, string> = Object.fromEntries(
+  DEPARTMENTS.map((d) => [d.value, d.label])
+);
 
 // Roles that require a department to be selected
 const DEPT_SPECIFIC_ROLES = ["FACULTY", "CLASS_COORDINATOR", "HOD"];
@@ -114,6 +123,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
     rejectedApplications: number;
     roleDistribution: { role: string; count: number }[];
     recentUsers: SearchedUser[];
+    roleOccupants: { name: string; role: string; department: string | null }[];
   } | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -131,6 +141,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
     }
     if (deptInfo) {
       fetchPendingApprovals();
+      fetchApprovalStats();
     } else {
       // Super Admin or unknown role — no approvals to fetch
       setFetching(false);
@@ -152,6 +163,19 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
       console.error("Failed to fetch admin stats:", err);
     } finally {
       setStatsLoading(false);
+    }
+  };
+
+  const fetchApprovalStats = async () => {
+    try {
+      const res = await fetch("/api/approvals/stats");
+      const data = await res.json();
+      if (data.success) {
+        setApprovedCount(data.data.totalApproved);
+        setRejectedCount(data.data.totalRejected);
+      }
+    } catch (err) {
+      console.error("Failed to fetch approval stats:", err);
     }
   };
 
@@ -187,8 +211,8 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
       const data = await res.json();
       if (data.success) {
         setApprovals((prev) => prev.filter((a) => a.id !== approvalId));
-        if (status === "APPROVED") setApprovedCount((prev) => prev + 1);
-        else setRejectedCount((prev) => prev + 1);
+        // Refresh the stats to get updated counts
+        fetchApprovalStats();
       }
     } catch (err) {
       console.error("Action failed:", err);
@@ -439,7 +463,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                 { value: "GENERAL_OFFICE", label: "General Office" },
                 { value: "ACCOUNTS_OFFICER", label: "Accounts Officer" },
               ].map((r) => {
-                const count = adminStats?.roleDistribution.find((rd) => rd.role === r.value)?.count ?? 0;
+                const occupants = adminStats?.roleOccupants.filter((o) => o.role === r.value) ?? [];
                 const isActive = quickAssignRole === r.value;
                 return (
                   <div key={r.value} className="space-y-2">
@@ -454,8 +478,16 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                           : "bg-gray-50 border-transparent hover:border-gray-300 hover:shadow-sm"
                       }`}
                     >
-                      <p className="text-lg font-bold text-gray-900">{count}</p>
-                      <p className="text-xs text-gray-600 font-semibold mt-0.5">{r.label}</p>
+                      {occupants.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {occupants.map((o, i) => (
+                            <p key={i} className="text-sm font-bold text-emerald-600">{o.name}</p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm font-medium text-gray-400 italic">Unassigned</p>
+                      )}
+                      <p className="text-xs text-gray-600 font-semibold mt-1">{r.label}</p>
                     </button>
                     {isActive && (
                       <div className="flex gap-2">
@@ -498,7 +530,7 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
             >
               <option value="">Select a department...</option>
               {DEPARTMENTS.map((dept) => (
-                <option key={dept} value={dept}>{dept}</option>
+                <option key={dept.value} value={dept.value}>{dept.label}</option>
               ))}
             </select>
 
@@ -523,8 +555,22 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                             : "bg-gray-50 border-transparent hover:border-gray-300 hover:shadow-sm"
                         }`}
                       >
+                        {(() => {
+                          const deptOccupants = adminStats?.roleOccupants.filter(
+                            (o) => o.role === r.value && o.department === selectedDeptForRoles
+                          ) ?? [];
+                          return deptOccupants.length > 0 ? (
+                            <div className="space-y-0.5 mb-1">
+                              {deptOccupants.map((o, i) => (
+                                <p key={i} className="text-sm font-bold text-emerald-600">{o.name}</p>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm font-medium text-gray-400 italic mb-1">Unassigned</p>
+                          );
+                        })()}
                         <p className="text-sm font-bold text-gray-900">{r.label}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{selectedDeptForRoles}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{DEPT_LABEL_MAP[selectedDeptForRoles] || selectedDeptForRoles}</p>
                       </button>
                       {isActive && (
                         <div className="flex gap-2">
@@ -627,17 +673,21 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">{u.department || "\u2014"}</td>
                         <td className="px-6 py-4">
-                          <button
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setNewRole(u.role);
-                              setNewDepartment(u.department || "");
-                              setAdminMessage(null);
-                            }}
-                            className="text-blue-600 hover:text-blue-800 text-sm font-semibold transition-colors"
-                          >
-                            Change Role
-                          </button>
+                          {u.role !== "STUDENT" ? (
+                            <button
+                              onClick={() => {
+                                setSelectedUser(u);
+                                setNewRole(u.role);
+                                setNewDepartment(u.department || "");
+                                setAdminMessage(null);
+                              }}
+                              className="text-blue-600 hover:text-blue-800 text-sm font-semibold transition-colors"
+                            >
+                              Change Role
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">Cannot change</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -685,17 +735,21 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500">{u.department || "\u2014"}</td>
                         <td className="px-6 py-4">
-                          <button
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setNewRole(u.role);
-                              setNewDepartment(u.department || "");
-                              setAdminMessage(null);
-                            }}
-                            className="text-blue-600 hover:text-blue-800 text-sm font-semibold transition-colors"
-                          >
-                            Change Role
-                          </button>
+                          {u.role !== "STUDENT" ? (
+                            <button
+                              onClick={() => {
+                                setSelectedUser(u);
+                                setNewRole(u.role);
+                                setNewDepartment(u.department || "");
+                                setAdminMessage(null);
+                              }}
+                              className="text-blue-600 hover:text-blue-800 text-sm font-semibold transition-colors"
+                            >
+                              Change Role
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">Cannot change</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -762,8 +816,8 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                       >
                         <option value="">Select a department...</option>
                         {DEPARTMENTS.map((dept) => (
-                          <option key={dept} value={dept}>
-                            {dept}
+                          <option key={dept.value} value={dept.value}>
+                            {dept.label}
                           </option>
                         ))}
                       </select>
@@ -907,51 +961,59 @@ export default function StaffDashboard({ params }: { params: Promise<{ role: str
                     <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Application</th>
                     <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Course</th>
                     <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitted</th>
-                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Remarks</th>
-                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100/80">
                   {approvals.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50/60 transition-colors">
+                    <tr
+                      key={item.id}
+                      className="hover:bg-gray-50/60 transition-colors cursor-pointer"
+                      onClick={() =>
+                        router.push(`/dashboard/review/${item.application.id}`)
+                      }
+                    >
                       <td className="px-6 py-4">
-                        <p className="font-medium text-sm text-gray-900">{item.application.fullName}</p>
+                        <p className="font-medium text-sm text-gray-900">
+                          {item.application.fullName}
+                        </p>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-sm text-blue-600 font-mono bg-blue-50 px-2 py-0.5 rounded">{item.application.applicationNo}</span>
+                        <span className="text-sm text-blue-600 font-mono bg-blue-50 px-2 py-0.5 rounded">
+                          {item.application.applicationNo}
+                        </span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{item.application.course}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {item.application.course}
+                      </td>
                       <td className="px-6 py-4 text-sm text-gray-400">
-                        {new Date(item.application.createdAt).toLocaleDateString("en-IN")}
+                        {new Date(item.application.createdAt).toLocaleDateString(
+                          "en-IN"
+                        )}
                       </td>
                       <td className="px-6 py-4">
-                        <input
-                          type="text"
-                          placeholder="Optional remarks"
-                          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none w-full max-w-48 bg-gray-50 focus:bg-white transition-colors"
-                          value={remarks[item.id] || ""}
-                          onChange={(e) =>
-                            setRemarks((prev) => ({ ...prev, [item.id]: e.target.value }))
-                          }
-                        />
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={() => handleAction(item.id, "APPROVED")}
-                            disabled={actionLoading === item.id}
-                            className="bg-emerald-600 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/dashboard/review/${item.application.id}`);
+                          }}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-semibold hover:bg-blue-100 transition-colors"
+                        >
+                          <svg
+                            className="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
                           >
-                            {actionLoading === item.id ? "..." : "Approve"}
-                          </button>
-                          <button
-                            onClick={() => handleAction(item.id, "REJECTED")}
-                            disabled={actionLoading === item.id}
-                            className="border border-red-200 text-red-600 px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-red-50 disabled:opacity-50 transition-colors"
-                          >
-                            Reject
-                          </button>
-                        </div>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                            />
+                          </svg>
+                          Review
+                        </button>
                       </td>
                     </tr>
                   ))}

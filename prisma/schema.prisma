@@ -7,11 +7,9 @@ datasource db {
 }
 
 model User {
-  id           String        @id @default(cuid())
+  id           String        @id // Supabase UID (UUID)
   email        String        @unique
-  password     String?       // nullable — Google-only users have no password
-  googleId     String?       @unique   // Google OAuth subject ID
-  avatarUrl    String?                 // Google profile picture
+  avatarUrl    String?                 // Google profile picture or custom
   enrollmentNo String?       @unique
   name         String
   role         UserRole      @default(STUDENT)

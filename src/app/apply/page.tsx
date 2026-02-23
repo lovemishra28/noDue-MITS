@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import PageHeader from "@/components/PageHeader";
@@ -89,6 +89,44 @@ export default function ApplyNoDues() {
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [highestValidStep, setHighestValidStep] = useState(1);
+
+  // File upload state
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const [uploadedFiles, setUploadedFiles] = useState<Record<string, { name: string; size: number }>>({});
+  const feeReceiptsRef = useRef<HTMLInputElement>(null);
+  const marksheetRef = useRef<HTMLInputElement>(null);
+  const bankDetailsRef = useRef<HTMLInputElement>(null);
+  const collegeIdRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (
+    category: string,
+    field: keyof FormData,
+    file: File
+  ) => {
+    setUploading((prev) => ({ ...prev, [category]: true }));
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("category", category);
+
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const data = await res.json();
+
+      if (data.success) {
+        update(field, data.data.url);
+        setUploadedFiles((prev) => ({
+          ...prev,
+          [category]: { name: file.name, size: file.size },
+        }));
+      } else {
+        setFieldErrors((prev) => ({ ...prev, [field]: data.error || "Upload failed" }));
+      }
+    } catch {
+      setFieldErrors((prev) => ({ ...prev, [field]: "Network error during upload" }));
+    } finally {
+      setUploading((prev) => ({ ...prev, [category]: false }));
+    }
+  };
 
   const update = (field: keyof FormData, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -182,27 +220,37 @@ export default function ApplyNoDues() {
     setSubmitError("");
 
     try {
+      // Convert string numbers to actual numbers
+      const passOutYear = parseInt(formData.passOutYear, 10);
+      const cgpa = parseFloat(formData.cgpa);
+
+      if (isNaN(passOutYear) || isNaN(cgpa)) {
+        setSubmitError("Invalid numeric values for Pass Out Year or CGPA");
+        setIsSubmitting(false);
+        return;
+      }
+
       const res = await fetch("/api/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          studentId: user?.id,
-          fullName: formData.fullName,
-          fatherName: formData.fatherName,
-          phoneNumber: formData.phoneNumber,
-          address: formData.address,
-          passOutYear: formData.passOutYear,
-          course: formData.course,
-          cgpa: formData.cgpa,
+          // DO NOT send studentId - backend gets it from session
+          fullName: formData.fullName.trim(),
+          fatherName: formData.fatherName.trim(),
+          phoneNumber: formData.phoneNumber.trim(),
+          address: formData.address.trim(),
+          passOutYear,
+          course: formData.course.trim(),
+          cgpa,
           isHostelResident: formData.isHostelResident,
-          hostelName: formData.hostelName || null,
-          roomNumber: formData.roomNumber || null,
+          hostelName: formData.isHostelResident ? formData.hostelName?.trim() : null,
+          roomNumber: formData.isHostelResident ? formData.roomNumber?.trim() : null,
           cautionMoneyRefund: formData.cautionMoneyRefund,
-          receiptNumber: formData.receiptNumber || null,
-          feeReceipts: formData.feeReceipts ? [formData.feeReceipts] : [],
-          marksheet: formData.marksheet || null,
-          bankDetails: formData.bankDetails || null,
-          collegeId: formData.collegeId || null,
+          receiptNumber: formData.cautionMoneyRefund ? formData.receiptNumber?.trim() : null,
+          feeReceipts: formData.feeReceipts ? [formData.feeReceipts.trim()] : [],
+          marksheet: formData.marksheet ? formData.marksheet.trim() : null,
+          bankDetails: formData.bankDetails ? formData.bankDetails.trim() : null,
+          collegeId: formData.collegeId ? formData.collegeId.trim() : null,
         }),
       });
 
@@ -210,10 +258,22 @@ export default function ApplyNoDues() {
       if (data.success) {
         setSubmitSuccess(true);
       } else {
-        setSubmitError(data.error || "Failed to submit application");
+        // Handle specific error cases
+        if (data.error && data.error.includes("not found")) {
+          setSubmitError(
+            "Your session has expired or is invalid. Please log in again."
+          );
+        } else {
+          setSubmitError(data.error || "Failed to submit application");
+        }
       }
-    } catch {
-      setSubmitError("Network error. Please try again.");
+    } catch (error) {
+      console.error("Submission error:", error);
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Network error. Please try again."
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -628,50 +688,254 @@ export default function ApplyNoDues() {
               <h3 className="text-lg font-semibold text-gray-900 border-b border-gray-100 pb-3">
                 Upload Documents
               </h3>
-              <p className="text-sm text-gray-500">
-                Provide URLs or references for the required documents. 
-                (File upload integration can be added with cloud storage.)
-              </p>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+                <p className="font-semibold mb-1">How to upload documents:</p>
+                <ol className="list-decimal list-inside space-y-1 text-blue-700">
+                  <li>Click the <strong>&quot;Choose File&quot;</strong> button for each document section below.</li>
+                  <li>A file dialog box will open — select your file (PDF, JPEG, PNG, or WebP, max 10MB).</li>
+                  <li>The file will be automatically uploaded and securely stored.</li>
+                  <li>A green confirmation will appear once the upload is successful.</li>
+                </ol>
+              </div>
               <div className="grid grid-cols-1 gap-5">
-                <div>
-                  <label className={labelClasses}>Fee Receipts (URL)</label>
+                {/* Fee Receipts Upload */}
+                <div className="border border-gray-200 rounded-xl p-5 bg-gray-50/50">
+                  <label className={labelClasses}>Fee Receipts</label>
+                  <p className="text-xs text-gray-400 mb-3">Upload your fee payment receipts</p>
                   <input
-                    type="url"
-                    className={inputClasses}
-                    placeholder="https://drive.google.com/..."
-                    value={formData.feeReceipts}
-                    onChange={(e) => update("feeReceipts", e.target.value)}
+                    ref={feeReceiptsRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileUpload("feeReceipts", "feeReceipts", file);
+                    }}
                   />
+                  {uploadedFiles.feeReceipts || formData.feeReceipts ? (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-sm text-emerald-800 font-medium">
+                          {uploadedFiles.feeReceipts?.name || "Previously uploaded"}
+                        </span>
+                        {uploadedFiles.feeReceipts && (
+                          <span className="text-xs text-emerald-600">
+                            ({(uploadedFiles.feeReceipts.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => feeReceiptsRef.current?.click()}
+                        className="text-xs text-emerald-700 font-semibold hover:text-emerald-800"
+                      >
+                        Replace
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => feeReceiptsRef.current?.click()}
+                      disabled={uploading.feeReceipts}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all disabled:opacity-50"
+                    >
+                      {uploading.feeReceipts ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                          <span className="font-medium">Choose File</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {fieldErrors.feeReceipts && <p className={errorTextClasses}>{fieldErrors.feeReceipts}</p>}
                 </div>
-                <div>
-                  <label className={labelClasses}>Previous Marksheet (URL)</label>
+
+                {/* Marksheet Upload */}
+                <div className="border border-gray-200 rounded-xl p-5 bg-gray-50/50">
+                  <label className={labelClasses}>Previous Marksheet</label>
+                  <p className="text-xs text-gray-400 mb-3">Upload your previous semester marksheet</p>
                   <input
-                    type="url"
-                    className={inputClasses}
-                    placeholder="https://drive.google.com/..."
-                    value={formData.marksheet}
-                    onChange={(e) => update("marksheet", e.target.value)}
+                    ref={marksheetRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileUpload("marksheet", "marksheet", file);
+                    }}
                   />
+                  {uploadedFiles.marksheet || formData.marksheet ? (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-sm text-emerald-800 font-medium">
+                          {uploadedFiles.marksheet?.name || "Previously uploaded"}
+                        </span>
+                        {uploadedFiles.marksheet && (
+                          <span className="text-xs text-emerald-600">
+                            ({(uploadedFiles.marksheet.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => marksheetRef.current?.click()}
+                        className="text-xs text-emerald-700 font-semibold hover:text-emerald-800"
+                      >
+                        Replace
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => marksheetRef.current?.click()}
+                      disabled={uploading.marksheet}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all disabled:opacity-50"
+                    >
+                      {uploading.marksheet ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                          <span className="font-medium">Choose File</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {fieldErrors.marksheet && <p className={errorTextClasses}>{fieldErrors.marksheet}</p>}
                 </div>
-                <div>
-                  <label className={labelClasses}>Bank Passbook / Cancelled Cheque (URL)</label>
+
+                {/* Bank Details Upload */}
+                <div className="border border-gray-200 rounded-xl p-5 bg-gray-50/50">
+                  <label className={labelClasses}>Bank Passbook / Cancelled Cheque</label>
+                  <p className="text-xs text-gray-400 mb-3">Upload your bank passbook or cancelled cheque</p>
                   <input
-                    type="url"
-                    className={inputClasses}
-                    placeholder="https://drive.google.com/..."
-                    value={formData.bankDetails}
-                    onChange={(e) => update("bankDetails", e.target.value)}
+                    ref={bankDetailsRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileUpload("bankDetails", "bankDetails", file);
+                    }}
                   />
+                  {uploadedFiles.bankDetails || formData.bankDetails ? (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-sm text-emerald-800 font-medium">
+                          {uploadedFiles.bankDetails?.name || "Previously uploaded"}
+                        </span>
+                        {uploadedFiles.bankDetails && (
+                          <span className="text-xs text-emerald-600">
+                            ({(uploadedFiles.bankDetails.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => bankDetailsRef.current?.click()}
+                        className="text-xs text-emerald-700 font-semibold hover:text-emerald-800"
+                      >
+                        Replace
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => bankDetailsRef.current?.click()}
+                      disabled={uploading.bankDetails}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all disabled:opacity-50"
+                    >
+                      {uploading.bankDetails ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                          <span className="font-medium">Choose File</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {fieldErrors.bankDetails && <p className={errorTextClasses}>{fieldErrors.bankDetails}</p>}
                 </div>
-                <div>
-                  <label className={labelClasses}>College ID Proof (URL)</label>
+
+                {/* College ID Upload */}
+                <div className="border border-gray-200 rounded-xl p-5 bg-gray-50/50">
+                  <label className={labelClasses}>College ID Proof</label>
+                  <p className="text-xs text-gray-400 mb-3">Upload your college identity card or proof</p>
                   <input
-                    type="url"
-                    className={inputClasses}
-                    placeholder="https://drive.google.com/..."
-                    value={formData.collegeId}
-                    onChange={(e) => update("collegeId", e.target.value)}
+                    ref={collegeIdRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileUpload("collegeId", "collegeId", file);
+                    }}
                   />
+                  {uploadedFiles.collegeId || formData.collegeId ? (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-sm text-emerald-800 font-medium">
+                          {uploadedFiles.collegeId?.name || "Previously uploaded"}
+                        </span>
+                        {uploadedFiles.collegeId && (
+                          <span className="text-xs text-emerald-600">
+                            ({(uploadedFiles.collegeId.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => collegeIdRef.current?.click()}
+                        className="text-xs text-emerald-700 font-semibold hover:text-emerald-800"
+                      >
+                        Replace
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => collegeIdRef.current?.click()}
+                      disabled={uploading.collegeId}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-all disabled:opacity-50"
+                    >
+                      {uploading.collegeId ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                          <span className="font-medium">Choose File</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {fieldErrors.collegeId && <p className={errorTextClasses}>{fieldErrors.collegeId}</p>}
                 </div>
               </div>
             </div>

@@ -1,53 +1,28 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { createToken, setSessionCookie } from "@/lib/session";
-
-const INSTITUTE_DOMAIN = "mitsgwl.ac.in";
 
 /**
  * POST /api/auth/verify-institute-email
  *
- * Called when a non-institute Google user submits their institute email.
- * Validates the email domain, creates the user, and signs them in.
+ * Called after Google OAuth when a new user needs to complete their profile.
  *
- * Body: { instituteEmail: string }
+ * Role is determined automatically from the email domain:
+ *   - @mitsgwl.ac.in  → STUDENT  (enrollmentNo + department required)
+ *   - @mitsgwl.com    → FACULTY  (department required, no enrollmentNo)
+ *   For external (non-institute) Google emails, the user must provide
+ *   their institute email so we can determine the role.
+ *
+ * Body: { enrollmentNo?: string, department: string, instituteEmail?: string }
  */
 export async function POST(request: Request) {
   try {
-    const { instituteEmail, enrollmentNo, department } = await request.json();
+    const { enrollmentNo, department, instituteEmail } = await request.json();
 
-    // --- Validate institute email ---
-    if (!instituteEmail || typeof instituteEmail !== "string") {
-      return NextResponse.json(
-        { success: false, error: "Institute email is required" },
-        { status: 400 }
-      );
-    }
-
-    if (!enrollmentNo || typeof enrollmentNo !== "string" || !enrollmentNo.trim()) {
-      return NextResponse.json(
-        { success: false, error: "Enrollment number is required" },
-        { status: 400 }
-      );
-    }
-
+    // --- Validate department (required for both roles) ---
     if (!department || typeof department !== "string" || !department.trim()) {
       return NextResponse.json(
         { success: false, error: "Department is required" },
-        { status: 400 }
-      );
-    }
-
-    const normalizedEmail = instituteEmail.toLowerCase().trim();
-    const domain = normalizedEmail.split("@")[1];
-
-    if (domain !== INSTITUTE_DOMAIN) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Only @${INSTITUTE_DOMAIN} email addresses are accepted`,
-        },
         { status: 400 }
       );
     }
@@ -67,7 +42,7 @@ export async function POST(request: Request) {
     }
 
     let googleData: {
-      googleId: string;
+      supabaseUid: string;
       googleEmail: string;
       googleName: string;
       avatarUrl: string | null;
@@ -82,76 +57,151 @@ export async function POST(request: Request) {
       );
     }
 
-    // --- Check if institute email is already taken ---
-    const existingUser = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
+    // --- Determine role from email domain ---
+    const emailLower = googleData.googleEmail.toLowerCase().trim();
+    const domain = emailLower.split("@")[1];
 
-    if (existingUser) {
-      // If the account exists but has no googleId, link it
-      if (!existingUser.googleId) {
-        const updatedUser = await prisma.user.update({
-          where: { id: existingUser.id },
-          data: {
-            googleId: googleData.googleId,
-            avatarUrl: googleData.avatarUrl || existingUser.avatarUrl,
-            enrollmentNo: enrollmentNo.toUpperCase(),
-            department,
-          },
-        });
+    let role: "STUDENT" | "FACULTY";
+    let finalEmail = emailLower;
 
-        // Clean up the pending cookie
-        cookieStore.delete("pending_google_auth");
-
-        return await signInAndRespond(updatedUser);
-      }
-
-      // If it's already linked to a different Google account
-      if (existingUser.googleId !== googleData.googleId) {
+    if (domain === "mitsgwl.ac.in") {
+      role = "STUDENT";
+    } else if (domain === "mitsgwl.com") {
+      role = "FACULTY";
+    } else {
+      // External email — user must provide their institute email
+      if (!instituteEmail || typeof instituteEmail !== "string" || !instituteEmail.trim()) {
         return NextResponse.json(
           {
             success: false,
-            error:
-              "This institute email is already linked to another Google account.",
+            error: "Institute email is required. Please provide your @mitsgwl.ac.in or @mitsgwl.com email.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const instEmailLower = instituteEmail.toLowerCase().trim();
+      const instDomain = instEmailLower.split("@")[1];
+
+      if (instDomain === "mitsgwl.ac.in") {
+        role = "STUDENT";
+      } else if (instDomain === "mitsgwl.com") {
+        role = "FACULTY";
+      } else {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Invalid institute email. Only @mitsgwl.ac.in (student) and @mitsgwl.com (faculty) emails are accepted.",
+          },
+          { status: 400 }
+        );
+      }
+
+      // Check if the institute email is already registered to another user
+      const existingInstEmail = await prisma.user.findUnique({
+        where: { email: instEmailLower },
+      });
+      if (existingInstEmail && existingInstEmail.id !== googleData.supabaseUid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "This institute email is already registered to another account.",
           },
           { status: 409 }
         );
       }
 
-      // Same Google account — just sign in
-      cookieStore.delete("pending_google_auth");
-      return await signInAndRespond(existingUser);
+      // Use institute email as the primary email for the user account
+      finalEmail = instEmailLower;
     }
 
-    // --- Check if enrollment number is already taken ---
-    const existingEnrollment = await prisma.user.findUnique({
-      where: { enrollmentNo: enrollmentNo.toUpperCase() },
+    // --- Validate enrollmentNo for students ---
+    if (role === "STUDENT") {
+      if (!enrollmentNo || typeof enrollmentNo !== "string" || !enrollmentNo.trim()) {
+        return NextResponse.json(
+          { success: false, error: "Enrollment number is required for students" },
+          { status: 400 }
+        );
+      }
+
+      // Check if enrollment number is already taken
+      const existingEnrollment = await prisma.user.findUnique({
+        where: { enrollmentNo: enrollmentNo.toUpperCase() },
+      });
+
+      if (existingEnrollment && existingEnrollment.id !== googleData.supabaseUid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "This enrollment number is already registered. Please contact support.",
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    // --- Check if email is already taken ---
+    const existingUser = await prisma.user.findUnique({
+      where: { email: finalEmail },
     });
 
-    if (existingEnrollment) {
-      return NextResponse.json(
-        { success: false, error: "This enrollment number is already registered. Please contact support." },
-        { status: 409 }
-      );
+    if (existingUser) {
+      // If the account exists but has a different Supabase UID, reject
+      if (existingUser.id !== googleData.supabaseUid) {
+        const updateData: Record<string, unknown> = {
+          avatarUrl: googleData.avatarUrl || existingUser.avatarUrl,
+          department,
+        };
+        if (role === "STUDENT" && enrollmentNo) {
+          updateData.enrollmentNo = enrollmentNo.toUpperCase();
+        }
+
+        const updatedUser = await prisma.user.update({
+          where: { id: existingUser.id },
+          data: updateData,
+        });
+
+        // Clean up the pending cookie
+        cookieStore.delete("pending_google_auth");
+
+        return signInAndRespond(updatedUser);
+      }
+
+      // Same Supabase UID — just sign in
+      cookieStore.delete("pending_google_auth");
+      return signInAndRespond(existingUser);
     }
 
-    // --- Create new user with institute email ---
+    // --- Create new user ---
+    const userData: Record<string, unknown> = {
+      id: googleData.supabaseUid, // Use Supabase UID as primary key
+      email: finalEmail,
+      name: googleData.googleName,
+      avatarUrl: googleData.avatarUrl,
+      department,
+      role,
+    };
+
+    if (role === "STUDENT" && enrollmentNo) {
+      userData.enrollmentNo = enrollmentNo.toUpperCase();
+    }
+
     const newUser = await prisma.user.create({
-      data: {
-        email: normalizedEmail,
-        name: googleData.googleName,
-        googleId: googleData.googleId,
-        avatarUrl: googleData.avatarUrl,
-        enrollmentNo: enrollmentNo.toUpperCase(),
-        department,
-        role: "STUDENT",
+      data: userData as {
+        id: string;
+        email: string;
+        name: string;
+        avatarUrl: string | null;
+        department: string;
+        role: "STUDENT" | "FACULTY";
+        enrollmentNo?: string;
       },
     });
 
     // Clean up the pending cookie
     cookieStore.delete("pending_google_auth");
 
-    return await signInAndRespond(newUser);
+    return signInAndRespond(newUser);
   } catch (error) {
     console.error("Verify institute email error:", error);
     return NextResponse.json(
@@ -162,7 +212,7 @@ export async function POST(request: Request) {
 }
 
 // ─── Helper ───────────────────────────────────────────────────
-async function signInAndRespond(user: {
+function signInAndRespond(user: {
   id: string;
   email: string;
   role: string;
@@ -170,17 +220,6 @@ async function signInAndRespond(user: {
   enrollmentNo: string | null;
   department: string | null;
 }) {
-  const token = await createToken({
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-    name: user.name,
-    enrollmentNo: user.enrollmentNo ?? undefined,
-    department: user.department ?? undefined,
-  });
-
-  await setSessionCookie(token);
-
   let redirectPath = "/dashboard";
   if (user.role === "STUDENT") {
     redirectPath = "/dashboard";

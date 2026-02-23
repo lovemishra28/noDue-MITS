@@ -161,16 +161,17 @@ export async function POST(request: Request) {
     sErr(validateString(body.course, "Course", 100));
 
     // Pass out year
-    const passOutYear = Number(body.passOutYear);
-    if (!passOutYear || passOutYear < 2000 || passOutYear > 2100) {
+    const passOutYear = body.passOutYear ? Number(body.passOutYear) : NaN;
+    if (isNaN(passOutYear) || passOutYear < 2000 || passOutYear > 2100) {
       errors.push("Pass Out Year must be between 2000 and 2100");
     }
 
     // CGPA
-    const cgpa = Number(body.cgpa);
-    if (isNaN(cgpa) || cgpa < 0 || cgpa > 10) {
+    const cgpaNum = body.cgpa ? Number(body.cgpa) : NaN;
+    if (isNaN(cgpaNum) || cgpaNum < 0 || cgpaNum > 10) {
       errors.push("CGPA must be between 0 and 10");
     }
+    const cgpa = cgpaNum;
 
     // Hostel fields
     const isHostelResident = Boolean(body.isHostelResident);
@@ -189,6 +190,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: errors.join("; ") },
         { status: 400 }
+      );
+    }
+
+    // --- Verify user exists in database ---
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+    });
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "User account not found. Please log in again." },
+        { status: 404 }
       );
     }
 
@@ -256,8 +268,9 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error("Application Submission Error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { success: false, error: "Failed to submit application" },
+      { success: false, error: `Failed to submit application: ${errorMessage}` },
       { status: 500 }
     );
   }

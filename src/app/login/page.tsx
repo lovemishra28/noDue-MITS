@@ -21,6 +21,7 @@ function LoginForm() {
         google_auth_failed: "Google sign-in failed. Please try again.",
         no_code: "Authentication callback missing. Please try again.",
         callback_failed: "Could not complete Google sign-in. Please try again.",
+        unsupported_domain: "Only .com (faculty) and .in (student) email domains are supported.",
       };
       setError(messages[authError] || "Authentication failed. Please try again.");
     }

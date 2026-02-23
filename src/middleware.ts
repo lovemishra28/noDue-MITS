@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { getSessionFromRequest } from "@/lib/session";
+import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -10,67 +10,45 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Read session from httpOnly JWT cookie
-  const session = await getSessionFromRequest(request);
+  // 2. Create Supabase client and get session
+  let response = NextResponse.next();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    }
+  );
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   // 3. If not logged in, redirect to login (except if already on /login or /verify-institute-email)
-  if (!session) {
+  if (!user) {
     if (pathname === "/login" || pathname === "/verify-institute-email") {
-      return NextResponse.next();
+      return response;
     }
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // 4. If logged in and on /login or /verify-institute-email, redirect to their dashboard
-  if (pathname === "/login" || pathname === "/verify-institute-email") {
-    if (session.role === "STUDENT") {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
-    return NextResponse.redirect(
-      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
-    );
-  }
-
-  // 5. Prevent Students from accessing Staff dashboards
-  if (pathname.startsWith("/dashboard/staff") && session.role === "STUDENT") {
+  // 4. If logged in and on /login, redirect to dashboard
+  // Note: Role-based routing is handled by AuthProvider in client
+  // since we can't use Prisma in edge runtime
+  if (pathname === "/login") {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // 6. Prevent Staff from accessing Student-only pages (apply, track, certificate)
-  const studentOnlyPaths = ["/apply", "/track", "/certificate"];
-  if (
-    studentOnlyPaths.some((p) => pathname.startsWith(p)) &&
-    session.role !== "STUDENT"
-  ) {
-    return NextResponse.redirect(
-      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
-    );
-  }
-
-  // 7. Prevent non-Super-Admin from accessing Super Admin dashboard
-  if (
-    pathname.startsWith("/dashboard/staff/super_admin") &&
-    session.role !== "SUPER_ADMIN"
-  ) {
-    if (session.role === "STUDENT") {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
-    return NextResponse.redirect(
-      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
-    );
-  }
-
-  // 8. Prevent Staff from accessing Student dashboard (/dashboard exactly)
-  if (
-    pathname === "/dashboard" &&
-    session.role !== "STUDENT"
-  ) {
-    return NextResponse.redirect(
-      new URL(`/dashboard/staff/${session.role.toLowerCase()}`, request.url)
-    );
-  }
-
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {
@@ -79,7 +57,8 @@ export const config = {
     "/apply/:path*",
     "/track/:path*",
     "/certificate/:path*",
-    "/login",
-    "/verify-institute-email",
+    "/login/:path*",
+    "/verify-institute-email/:path*",
+    "/history/:path*",
   ],
 };

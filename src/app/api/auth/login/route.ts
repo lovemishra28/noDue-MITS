@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import bcrypt from "bcryptjs";
-import { createToken, setSessionCookie } from "@/lib/session";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
 export async function POST(request: Request) {
   try {
@@ -21,43 +21,55 @@ export async function POST(request: Request) {
       );
     }
 
-    // 1. Look up user by email
+    // 1. Sign in via Supabase Auth
+    const cookieStore = await cookies();
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) => {
+                cookieStore.set(name, value, options);
+              });
+            } catch {
+              // Can't set cookies in some contexts — safe to ignore
+            }
+          },
+        },
+      }
+    );
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.toLowerCase().trim(),
+      password,
+    });
+
+    if (error || !data.user) {
+      return NextResponse.json(
+        { success: false, error: "Invalid email or password" },
+        { status: 401 }
+      );
+    }
+
+    // 2. Look up user in Prisma by Supabase UID
     const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
+      where: { id: data.user.id },
     });
 
-    if (!user || !user.password) {
-      // Generic message to prevent user enumeration
-      // Also handles users who signed up with Google (no password) trying to use password login
+    if (!user) {
       return NextResponse.json(
-        { success: false, error: "Invalid email or password" },
+        { success: false, error: "User account not found. Please contact admin." },
         { status: 401 }
       );
     }
 
-    // 2. Verify password against bcrypt hash
-    const passwordValid = await bcrypt.compare(password, user.password);
-    if (!passwordValid) {
-      return NextResponse.json(
-        { success: false, error: "Invalid email or password" },
-        { status: 401 }
-      );
-    }
-
-    // 3. Create JWT token
-    const token = await createToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      name: user.name,
-      enrollmentNo: user.enrollmentNo ?? undefined,
-      department: user.department ?? undefined,
-    });
-
-    // 4. Set httpOnly cookie
-    await setSessionCookie(token);
-
-    // 5. Determine redirect path based on role
+    // 3. Determine redirect path based on role
     let redirectPath = "/dashboard";
     if (user.role === "STUDENT") {
       redirectPath = "/dashboard";
@@ -67,7 +79,7 @@ export async function POST(request: Request) {
       redirectPath = `/dashboard/staff/${user.role.toLowerCase()}`;
     }
 
-    // 6. Return user data (no sensitive fields)
+    // 4. Return user data (no sensitive fields)
     return NextResponse.json({
       success: true,
       user: {

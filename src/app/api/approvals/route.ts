@@ -48,6 +48,17 @@ export async function PATCH(request: Request) {
         { status: 400 }
       );
     }
+    
+    // --- MANDATORY REMARKS: remarks must be provided and non-empty ---
+    if (!remarks || typeof remarks !== "string" || remarks.trim().length === 0) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: `Remarks are mandatory to ${status === "APPROVED" ? "approve" : "reject"} this application. Please provide detailed reasoning for your decision.` 
+        },
+        { status: 400 }
+      );
+    }
 
     // --- Fetch the approval record ---
     const approval = await prisma.approval.findUnique({
@@ -99,7 +110,7 @@ export async function PATCH(request: Request) {
       where: { id: approvalId },
       data: {
         status,
-        remarks: remarks || null,
+        remarks: remarks.trim(),
         approvedBy: session.userId,
         actionDate: new Date(),
       },

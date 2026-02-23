@@ -1,21 +1,18 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { createToken, setSessionCookie } from "@/lib/session";
-
-const INSTITUTE_DOMAIN = "mitsgwl.ac.in";
 
 /**
  * GET /api/auth/callback
  * Handles the OAuth callback from Supabase/Google.
  *
  * Flow:
- * 1. Exchange the code for a Supabase session
- * 2. Extract Google profile (email, name, avatar, sub)
- * 3. Check if user already exists by googleId → sign in
- * 4. If not, check email domain:
- *    - @mitsgwl.ac.in → auto-create user and sign in
- *    - Other domain → redirect to /verify-institute-email with Google data in a short-lived cookie
+ * 1. Exchange the code for a Supabase session (auth is now handled by Supabase)
+ * 2. Get the authenticated user from Supabase
+ * 3. Check if user exists in Prisma by Supabase UID
+ * 4. If new user, classify by email domain and redirect to verify page
+ * 5. If existing user, redirect based on profile completeness
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -28,7 +25,26 @@ export async function GET(request: Request) {
     );
   }
 
-  const supabase = await createSupabaseServerClient();
+  const cookieStore = await cookies();
+  let response = NextResponse.next();
+  
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    }
+  );
 
   // Exchange the authorization code for a session
   const { data: sessionData, error: sessionError } =
@@ -41,79 +57,84 @@ export async function GET(request: Request) {
     );
   }
 
-  const googleUser = sessionData.user;
-  const googleEmail = googleUser.email!;
-  const googleId = googleUser.id; // Supabase user id (linked to Google sub)
+  const authUser = sessionData.user;
+  const supabaseUid = authUser.id; // Supabase user ID (UUID)
+  const googleEmail = authUser.email!;
   const googleName =
-    googleUser.user_metadata?.full_name ||
-    googleUser.user_metadata?.name ||
+    authUser.user_metadata?.full_name ||
+    authUser.user_metadata?.name ||
     googleEmail.split("@")[0];
   const avatarUrl =
-    googleUser.user_metadata?.avatar_url ||
-    googleUser.user_metadata?.picture ||
+    authUser.user_metadata?.avatar_url ||
+    authUser.user_metadata?.picture ||
     null;
 
   // -----------------------------------------------------------
-  // 1. Check if user already exists in our DB by googleId
+  // 1. Check if user exists in Prisma by Supabase UID
   // -----------------------------------------------------------
   let existingUser = await prisma.user.findUnique({
-    where: { googleId },
+    where: { id: supabaseUid },
   });
 
   if (existingUser) {
-    // User exists → create session and redirect
-    return await signInAndRedirect(existingUser, origin);
+    // User fully registered — sign in and redirect
+    const redirectPath = getRedirectPath(existingUser.role);
+    response = NextResponse.redirect(new URL(redirectPath, origin));
+    return response;
   }
 
-  // Also check by email (in case they were created via password before)
+  // Also check by email in case they were created before UID migration
   existingUser = await prisma.user.findUnique({
     where: { email: googleEmail.toLowerCase().trim() },
   });
 
   if (existingUser) {
-    // Link the Google ID to the existing account
+    // Migrate the old account to use Supabase UID
     existingUser = await prisma.user.update({
       where: { id: existingUser.id },
       data: {
-        googleId,
+        id: supabaseUid,
         avatarUrl: avatarUrl || existingUser.avatarUrl,
       },
     });
-    return await signInAndRedirect(existingUser, origin);
+    const redirectPath = getRedirectPath(existingUser.role);
+    response = NextResponse.redirect(new URL(redirectPath, origin));
+    return response;
   }
 
   // -----------------------------------------------------------
-  // 2. New user — check email domain
+  // 2. New user — classify by email domain
+  //    @mitsgwl.ac.in  → STUDENT
+  //    @mitsgwl.com    → FACULTY
+  //    anything else   → external (must provide institute email)
   // -----------------------------------------------------------
-  const emailDomain = googleEmail.split("@")[1]?.toLowerCase();
+  const emailLower = googleEmail.toLowerCase().trim();
+  const domain = emailLower.split("@")[1]; // e.g. "mitsgwl.ac.in", "gmail.com"
 
-  if (emailDomain === INSTITUTE_DOMAIN) {
-    // Institute domain → auto-create and sign in
-    const newUser = await prisma.user.create({
-      data: {
-        email: googleEmail.toLowerCase().trim(),
-        name: googleName,
-        googleId,
-        avatarUrl,
-        role: "STUDENT", // default role for new Google sign-ups
-      },
-    });
-    return await signInAndRedirect(newUser, origin);
+  let userType: "student" | "faculty" | "external";
+
+  if (domain === "mitsgwl.ac.in") {
+    userType = "student";
+  } else if (domain === "mitsgwl.com") {
+    userType = "faculty";
+  } else {
+    // Non-institute email — user must provide their institute email
+    userType = "external";
   }
 
   // -----------------------------------------------------------
-  // 3. Non-institute domain → redirect to verify page
-  //    Store Google data in a short-lived httpOnly cookie
+  // 3. Redirect to profile-completion page with Google data
+  //    in a short-lived httpOnly cookie
   // -----------------------------------------------------------
   const googleData = JSON.stringify({
-    googleId,
+    supabaseUid,
     googleEmail,
     googleName,
     avatarUrl,
   });
 
-  const response = NextResponse.redirect(
-    new URL("/verify-institute-email", origin)
+  response = NextResponse.redirect(
+    new URL(`/verify-institute-email?type=${userType}`, origin)
   );
 
   response.cookies.set("pending_google_auth", googleData, {
@@ -128,36 +149,12 @@ export async function GET(request: Request) {
 }
 
 // ─── Helper ───────────────────────────────────────────────────
-async function signInAndRedirect(
-  user: {
-    id: string;
-    email: string;
-    role: string;
-    name: string;
-    enrollmentNo: string | null;
-    department: string | null;
-  },
-  origin: string
-) {
-  const token = await createToken({
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-    name: user.name,
-    enrollmentNo: user.enrollmentNo ?? undefined,
-    department: user.department ?? undefined,
-  });
-
-  await setSessionCookie(token);
-
-  let redirectPath = "/dashboard";
-  if (user.role === "STUDENT") {
-    redirectPath = "/dashboard";
-  } else if (user.role === "SUPER_ADMIN") {
-    redirectPath = "/dashboard/staff/super_admin";
+function getRedirectPath(role: string) {
+  if (role === "STUDENT") {
+    return "/dashboard";
+  } else if (role === "SUPER_ADMIN") {
+    return "/dashboard/staff/super_admin";
   } else {
-    redirectPath = `/dashboard/staff/${user.role.toLowerCase()}`;
+    return `/dashboard/staff/${role.toLowerCase()}`;
   }
-
-  return NextResponse.redirect(new URL(redirectPath, origin));
 }

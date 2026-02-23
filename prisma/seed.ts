@@ -2,7 +2,7 @@
 import { PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import bcrypt from "bcryptjs";
+import { createClient } from "@supabase/supabase-js";
 
 const connectionString = process.env.DATABASE_URL!;
 console.log("🔗 Connecting to:", connectionString.replace(/:[^:@]+@/, ":***@"));
@@ -11,168 +11,193 @@ const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
+// Supabase Admin client (service role key) to create auth users
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
 const DEFAULT_PASSWORD = "Test@1234";
 const SUPER_ADMIN_PASSWORD = "Admin@mits2024";
+
+/**
+ * Create a user in both Supabase Auth and Prisma.
+ * If the Supabase Auth user already exists, reuse their UID.
+ */
+async function createUser(opts: {
+  email: string;
+  password: string;
+  name: string;
+  role: string;
+  department?: string;
+  enrollmentNo?: string;
+}) {
+  // 1. Create or fetch Supabase Auth user
+  let supabaseUid: string;
+
+  const { data: createData, error: createError } =
+    await supabaseAdmin.auth.admin.createUser({
+      email: opts.email,
+      password: opts.password,
+      email_confirm: true, // auto-confirm so they can login immediately
+    });
+
+  if (createError) {
+    // User might already exist — try to find them
+    const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+    const existing = listData?.users?.find(
+      (u) => u.email === opts.email
+    );
+    if (existing) {
+      supabaseUid = existing.id;
+      // Update password in case it changed
+      await supabaseAdmin.auth.admin.updateUserById(supabaseUid, {
+        password: opts.password,
+      });
+    } else {
+      throw new Error(
+        `Failed to create Supabase user ${opts.email}: ${createError.message}`
+      );
+    }
+  } else {
+    supabaseUid = createData.user.id;
+  }
+
+  // 2. Upsert in Prisma using the Supabase UID
+  const prismaData: Record<string, unknown> = {
+    id: supabaseUid,
+    email: opts.email,
+    name: opts.name,
+    role: opts.role,
+  };
+  if (opts.department) prismaData.department = opts.department;
+  if (opts.enrollmentNo) prismaData.enrollmentNo = opts.enrollmentNo;
+
+  await prisma.user.upsert({
+    where: { email: opts.email },
+    update: prismaData,
+    create: prismaData as {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+      department?: string;
+      enrollmentNo?: string;
+    },
+  });
+
+  return supabaseUid;
+}
 
 async function main() {
   console.log("🌱 Seeding database...\n");
 
-  // Clean up existing data in correct order to respect foreign keys
+  // Clean up existing Prisma data in correct order to respect foreign keys
   try {
     await prisma.approval.deleteMany({});
     await prisma.application.deleteMany({});
     await prisma.user.deleteMany({});
-    console.log("🧹 Cleared existing data");
+    console.log("🧹 Cleared existing Prisma data");
   } catch (e) {
     console.log("⚠️ Could not clear data", e);
   }
 
-  const hashedPassword = await bcrypt.hash(DEFAULT_PASSWORD, 10);
-  const hashedAdminPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
-
-  // ─── 1. Super Admin (dedicated separate account with its own password) ───
-  const admin = await prisma.user.upsert({
-    where: { email: "superadmin@mitsgwl.ac.in" },
-    update: { password: hashedAdminPassword },
-    create: {
-      email: "superadmin@mitsgwl.ac.in",
-      name: "System Admin",
-      role: "SUPER_ADMIN",
-      password: hashedAdminPassword,
-    },
+  // ─── 1. Super Admin ───
+  await createUser({
+    email: "superadmin@mitsgwl.ac.in",
+    password: SUPER_ADMIN_PASSWORD,
+    name: "System Admin",
+    role: "SUPER_ADMIN",
   });
-  console.log(`✅ Super Admin: ${admin.email} (password: ${SUPER_ADMIN_PASSWORD})`);
+  console.log(`✅ Super Admin: superadmin@mitsgwl.ac.in (password: ${SUPER_ADMIN_PASSWORD})`);
 
-  // ─── 2. Student (role detected from email) ───
-  const student = await prisma.user.upsert({
-    where: { email: "student@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "student@mitsgwl.ac.in",
-      name: "Love Mishra",
-      role: "STUDENT",
-      enrollmentNo: "0108CS221001",
-      department: "CSE",
-      password: hashedPassword,
-    },
+  // ─── 2. Student ───
+  await createUser({
+    email: "student@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Love Mishra",
+    role: "STUDENT",
+    enrollmentNo: "0108CS221001",
+    department: "CSE",
   });
-  console.log(`✅ Student: ${student.email}`);
+  console.log(`✅ Student: student@mitsgwl.ac.in`);
 
-  // ─── 3. Faculty (role detected from email) ───
-  const faculty = await prisma.user.upsert({
-    where: { email: "faculty@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "faculty@mitsgwl.ac.in",
-      name: "Dr. Rajesh Kumar",
-      role: "FACULTY",
-      department: "CSE",
-      password: hashedPassword,
-    },
+  // ─── 3. Faculty ───
+  await createUser({
+    email: "faculty@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Dr. Rajesh Kumar",
+    role: "FACULTY",
+    department: "CSE",
   });
-  console.log(`✅ Faculty: ${faculty.email}`);
+  console.log(`✅ Faculty: faculty@mitsgwl.ac.in`);
 
   // ─── Below users demonstrate roles assigned by Super Admin ───
-  // In production, these would first register as FACULTY,
-  // then the Super Admin promotes them to their specific role.
-
-  const cc = await prisma.user.upsert({
-    where: { email: "coordinator@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "coordinator@mitsgwl.ac.in",
-      name: "Prof. Neha Gupta",
-      role: "CLASS_COORDINATOR",
-      department: "CSE",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "coordinator@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Prof. Neha Gupta",
+    role: "CLASS_COORDINATOR",
+    department: "CSE",
   });
-  console.log(`✅ Class Coordinator: ${cc.email}`);
+  console.log(`✅ Class Coordinator: coordinator@mitsgwl.ac.in`);
 
-  const hod = await prisma.user.upsert({
-    where: { email: "hod@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "hod@mitsgwl.ac.in",
-      name: "Dr. Amit Sharma",
-      role: "HOD",
-      department: "CSE",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "hod@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Dr. Amit Sharma",
+    role: "HOD",
+    department: "CSE",
   });
-  console.log(`✅ HOD: ${hod.email}`);
+  console.log(`✅ HOD: hod@mitsgwl.ac.in`);
 
-  const warden = await prisma.user.upsert({
-    where: { email: "warden@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "warden@mitsgwl.ac.in",
-      name: "Mr. Suresh Patel",
-      role: "HOSTEL_WARDEN",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "warden@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Mr. Suresh Patel",
+    role: "HOSTEL_WARDEN",
   });
-  console.log(`✅ Hostel Warden: ${warden.email}`);
+  console.log(`✅ Hostel Warden: warden@mitsgwl.ac.in`);
 
-  const library = await prisma.user.upsert({
-    where: { email: "library@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "library@mitsgwl.ac.in",
-      name: "Mrs. Sunita Verma",
-      role: "LIBRARY_ADMIN",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "library@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Mrs. Sunita Verma",
+    role: "LIBRARY_ADMIN",
   });
-  console.log(`✅ Library Admin: ${library.email}`);
+  console.log(`✅ Library Admin: library@mitsgwl.ac.in`);
 
-  const workshop = await prisma.user.upsert({
-    where: { email: "workshop@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "workshop@mitsgwl.ac.in",
-      name: "Mr. Ramesh Yadav",
-      role: "WORKSHOP_ADMIN",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "workshop@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Mr. Ramesh Yadav",
+    role: "WORKSHOP_ADMIN",
   });
-  console.log(`✅ Workshop Admin: ${workshop.email}`);
+  console.log(`✅ Workshop Admin: workshop@mitsgwl.ac.in`);
 
-  const tp = await prisma.user.upsert({
-    where: { email: "tnp@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "tnp@mitsgwl.ac.in",
-      name: "Dr. Priya Singh",
-      role: "TP_OFFICER",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "tnp@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Dr. Priya Singh",
+    role: "TP_OFFICER",
   });
-  console.log(`✅ T&P Officer: ${tp.email}`);
+  console.log(`✅ T&P Officer: tnp@mitsgwl.ac.in`);
 
-  const office = await prisma.user.upsert({
-    where: { email: "office@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "office@mitsgwl.ac.in",
-      name: "Mr. Vikram Joshi",
-      role: "GENERAL_OFFICE",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "office@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Mr. Vikram Joshi",
+    role: "GENERAL_OFFICE",
   });
-  console.log(`✅ General Office: ${office.email}`);
+  console.log(`✅ General Office: office@mitsgwl.ac.in`);
 
-  const accounts = await prisma.user.upsert({
-    where: { email: "accounts@mitsgwl.ac.in" },
-    update: { password: hashedPassword },
-    create: {
-      email: "accounts@mitsgwl.ac.in",
-      name: "Mrs. Kavita Dubey",
-      role: "ACCOUNTS_OFFICER",
-      password: hashedPassword,
-    },
+  await createUser({
+    email: "accounts@mitsgwl.ac.in",
+    password: DEFAULT_PASSWORD,
+    name: "Mrs. Kavita Dubey",
+    role: "ACCOUNTS_OFFICER",
   });
-  console.log(`✅ Accounts Officer: ${accounts.email}`);
+  console.log(`✅ Accounts Officer: accounts@mitsgwl.ac.in`);
 
   console.log(`\n🎉 Seeding complete!`);
   console.log(`📝 Default users password: ${DEFAULT_PASSWORD}`);

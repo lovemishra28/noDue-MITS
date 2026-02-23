@@ -56,6 +56,31 @@ export async function GET() {
       take: 10,
     });
 
+    // Get current occupants for each assignable role (name + department)
+    const roleOccupants = await prisma.user.findMany({
+      where: {
+        role: {
+          in: [
+            "FACULTY",
+            "CLASS_COORDINATOR",
+            "HOD",
+            "HOSTEL_WARDEN",
+            "LIBRARY_ADMIN",
+            "WORKSHOP_ADMIN",
+            "TP_OFFICER",
+            "GENERAL_OFFICE",
+            "ACCOUNTS_OFFICER",
+          ],
+        },
+      },
+      select: {
+        name: true,
+        role: true,
+        department: true,
+      },
+      orderBy: { name: "asc" },
+    });
+
     return NextResponse.json({
       success: true,
       data: {
@@ -71,6 +96,7 @@ export async function GET() {
           count: r._count.role,
         })),
         recentUsers,
+        roleOccupants,
       },
     });
   } catch (error) {
