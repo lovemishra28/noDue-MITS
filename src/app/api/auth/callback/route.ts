@@ -89,14 +89,15 @@ export async function GET(request: Request) {
   });
 
   if (existingUser) {
-    // Migrate the old account to use Supabase UID
-    existingUser = await prisma.user.update({
-      where: { id: existingUser.id },
-      data: {
-        id: supabaseUid,
-        avatarUrl: avatarUrl || existingUser.avatarUrl,
-      },
-    });
+    // Update avatar if available
+    if (avatarUrl && !existingUser.avatarUrl) {
+      existingUser = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          avatarUrl: avatarUrl,
+        },
+      });
+    }
     const redirectPath = getRedirectPath(existingUser.role);
     response = NextResponse.redirect(new URL(redirectPath, origin));
     return response;

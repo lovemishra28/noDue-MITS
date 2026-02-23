@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { UserRole } from "@prisma/client";
 
 /**
  * POST /api/auth/verify-institute-email
@@ -61,13 +62,13 @@ export async function POST(request: Request) {
     const emailLower = googleData.googleEmail.toLowerCase().trim();
     const domain = emailLower.split("@")[1];
 
-    let role: "STUDENT" | "FACULTY";
+    let role: UserRole;
     let finalEmail = emailLower;
 
     if (domain === "mitsgwl.ac.in") {
-      role = "STUDENT";
+      role = "STUDENT" as UserRole;
     } else if (domain === "mitsgwl.com") {
-      role = "FACULTY";
+      role = "FACULTY" as UserRole;
     } else {
       // External email — user must provide their institute email
       if (!instituteEmail || typeof instituteEmail !== "string" || !instituteEmail.trim()) {
@@ -84,9 +85,9 @@ export async function POST(request: Request) {
       const instDomain = instEmailLower.split("@")[1];
 
       if (instDomain === "mitsgwl.ac.in") {
-        role = "STUDENT";
+        role = "STUDENT" as UserRole;
       } else if (instDomain === "mitsgwl.com") {
-        role = "FACULTY";
+        role = "FACULTY" as UserRole;
       } else {
         return NextResponse.json(
           {
@@ -148,53 +149,45 @@ export async function POST(request: Request) {
     if (existingUser) {
       // If the account exists but has a different Supabase UID, reject
       if (existingUser.id !== googleData.supabaseUid) {
-        const updateData: Record<string, unknown> = {
-          avatarUrl: googleData.avatarUrl || existingUser.avatarUrl,
-          department,
-        };
-        if (role === "STUDENT" && enrollmentNo) {
-          updateData.enrollmentNo = enrollmentNo.toUpperCase();
-        }
-
-        const updatedUser = await prisma.user.update({
-          where: { id: existingUser.id },
-          data: updateData,
-        });
-
-        // Clean up the pending cookie
-        cookieStore.delete("pending_google_auth");
-
-        return signInAndRespond(updatedUser);
+        return NextResponse.json(
+          {
+            success: false,
+            error: "This email is already registered to another account. Please use a different email or log in to your existing account.",
+          },
+          { status: 409 }
+        );
       }
 
-      // Same Supabase UID — just sign in
+      // Same Supabase UID — just update and sign in
+      const updateData: Record<string, unknown> = {
+        avatarUrl: googleData.avatarUrl || existingUser.avatarUrl,
+        department,
+      };
+      if (role === "STUDENT" && enrollmentNo) {
+        updateData.enrollmentNo = enrollmentNo.toUpperCase();
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: updateData as Parameters<typeof prisma.user.update>[0]["data"],
+      });
+
+      // Clean up the pending cookie
       cookieStore.delete("pending_google_auth");
-      return signInAndRespond(existingUser);
+
+      return signInAndRespond(updatedUser);
     }
 
     // --- Create new user ---
-    const userData: Record<string, unknown> = {
-      id: googleData.supabaseUid, // Use Supabase UID as primary key
-      email: finalEmail,
-      name: googleData.googleName,
-      avatarUrl: googleData.avatarUrl,
-      department,
-      role,
-    };
-
-    if (role === "STUDENT" && enrollmentNo) {
-      userData.enrollmentNo = enrollmentNo.toUpperCase();
-    }
-
     const newUser = await prisma.user.create({
-      data: userData as {
-        id: string;
-        email: string;
-        name: string;
-        avatarUrl: string | null;
-        department: string;
-        role: "STUDENT" | "FACULTY";
-        enrollmentNo?: string;
+      data: {
+        id: googleData.supabaseUid,
+        email: finalEmail,
+        name: googleData.googleName,
+        avatarUrl: googleData.avatarUrl,
+        department,
+        role,
+        ...(role === "STUDENT" && enrollmentNo && { enrollmentNo: enrollmentNo.toUpperCase() }),
       },
     });
 
