@@ -158,10 +158,6 @@ export async function GET(request: Request) {
       { status: 500 }
     );
   }
-    maxAge: 60 * 10, // 10 minutes — enough time to fill the form
-  });
-
-  return response;
 }
 
 // ─── Helper ───────────────────────────────────────────────────
