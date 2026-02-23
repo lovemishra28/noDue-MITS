@@ -105,6 +105,10 @@ export async function GET(request: Request) {
         });
       }
       const redirectPath = getRedirectPath(existingUser.role);
+      response = NextResponse.redirect(new URL(redirectPath, origin));
+      return response;
+    }
+
     // -----------------------------------------------------------
     // 2. New user — classify by email domain
     //    @mitsgwl.ac.in  → STUDENT
